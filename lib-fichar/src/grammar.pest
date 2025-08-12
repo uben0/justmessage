@@ -1,0 +1,36 @@
+WHITESPACE   = _{ " " }
+enter        = _{ "enter" }
+leave        = _{ "leave" }
+month        = _{ "month" }
+month_n      = _{ month_july | month_august }
+month_july   = @{ "7" | "07" | "jully" | "jul" }
+month_august = @{ "8" | "08" | "august" | "aug" }
+hour_minute  = ${ number ~ ":" ~ number | number ~ "h" ~ number ~ "m"? }
+number       = @{ ASCII_DIGIT+ }
+year         = @{ ASCII_DIGIT{4} }
+year_month   = ${ year ~ ("/" | "-" | WHITESPACE+ ) ~ month_n }
+month_year   = ${ month_n ~ ("/" | "-" | WHITESPACE+ ) ~ year }
+time_zone    = @{ (LETTER | "/" | "_")+ }
+
+
+command = {
+    SOI ~ (
+        command_set_time_zone         |
+        command_enter_now_hour_minute |
+        command_enter_now             |
+        command_leave_now_hour_minute |
+        command_leave_now             |
+        command_month_year_month      |
+        command_month_now_month       |
+        command_month_now
+    ) ~ EOI
+}
+
+command_set_time_zone         = { "set"? ~ "time" ~ "zone" ~ time_zone }
+command_enter_now             = { enter }
+command_enter_now_hour_minute = { enter ~ hour_minute }
+command_leave_now             = { leave }
+command_leave_now_hour_minute = { leave ~ hour_minute }
+command_month_now             = { month }
+command_month_now_month       = { month? ~ month_n }
+command_month_year_month      = { month? ~ (year_month | month_year) }
