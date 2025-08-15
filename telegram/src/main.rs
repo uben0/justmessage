@@ -74,11 +74,12 @@ fn main() {
                         message.from.as_ref().unwrap().first_name,
                         message.text.as_ref().unwrap()
                     );
-                    for response in state.app_fichar.message(Message {
+                    let responses = state.app_fichar.message(Message {
                         instant: message.date as i64,
                         content: message.text.unwrap(),
                         person,
-                    }) {
+                    });
+                    for response in responses {
                         match response {
                             Response::Success => {
                                 let params = SendMessageParams::builder()
@@ -118,12 +119,6 @@ fn main() {
                             }
                         }
                     }
-                    // let user = message.from.unwrap();
-                    // let text = message.text.unwrap();
-                    // let chat = message.chat.id;
-                    // println!("{} > {}", user.first_name, text);
-                    // println!("date = {}", message.date);
-                    // println!("chat = {}", chat);
                 }
                 _ => {}
             }

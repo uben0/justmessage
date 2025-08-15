@@ -1,0 +1,29 @@
+WHITESPACE = _{ " " | "\n" }
+
+value = {
+    null |
+    bool |
+    int |
+    string |
+    array |
+    object
+}
+null = { "null" }
+bool = { "true" | "false" }
+int = ${ ("+" | "-")? ~ '0'..'9'+ }
+array = { "[" ~ value? ~ ("," ~ value)* ~ "]" }
+string = ${ "\"" ~ ("\\" ~ escape | char )* ~ "\"" }
+object = { "{" ~ attribute? ~ ("," ~ attribute)* ~ "}" }
+
+attribute = { string ~ ":" ~ value }
+escape = _{
+    char_bs |
+    char_sq |
+    char_dq |
+    char_ln
+}
+char = ${ !"\"" ~ ANY }
+char_bs = ${ "\\" }
+char_dq = ${ "\"" }
+char_sq = ${ "'" }
+char_ln = ${ "n" }

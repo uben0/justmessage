@@ -141,9 +141,9 @@ impl Renderer {
     }
     pub fn render(
         &self,
-        main: impl Into<String>,
-        sources: HashMap<String, String>,
-        bytes: HashMap<String, Vec<u8>>,
+        main: &str,
+        sources: HashMap<&str, String>,
+        bytes: HashMap<&str, Vec<u8>>,
     ) -> Vec<u8> {
         let main_id = FileId::new_fake(VirtualPath::new("main.typ"));
         let result = typst::compile::<PagedDocument>(&RendererWithFiles {

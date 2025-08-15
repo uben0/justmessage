@@ -1,4 +1,6 @@
-use chrono::{Datelike, Days, NaiveDate, NaiveTime, TimeZone, Timelike};
+use chrono::{
+    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike,
+};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
@@ -28,6 +30,97 @@ pub trait TimeZoneExt: TimeZone + Clone {
         SpansDaySplit(range, self.clone())
     }
 }
+
+pub trait DateTimeExt: Sized {
+    fn align_year(self) -> Option<Self>;
+    fn range_year(self) -> Option<Range<i64>>;
+    fn align_month(self) -> Option<Self>;
+    fn range_month(self) -> Option<Range<i64>>;
+    fn align_day(self) -> Option<Self>;
+    fn range_day(self) -> Option<Range<i64>>;
+    fn align_hour(self) -> Option<Self>;
+    fn range_hour(self) -> Option<Range<i64>>;
+    fn align_minute(self) -> Option<Self>;
+    fn range_minute(self) -> Option<Range<i64>>;
+}
+impl<T> DateTimeExt for DateTime<T>
+where
+    T: TimeZone,
+{
+    fn align_year(self) -> Option<Self> {
+        self.with_nanosecond(0)?
+            .with_second(0)?
+            .with_minute(0)?
+            .with_hour(0)?
+            .with_day(1)?
+            .with_month(1)
+    }
+
+    fn range_year(self) -> Option<Range<i64>> {
+        assert_eq!(self.month(), 1);
+        assert_eq!(self.day(), 1);
+        assert_eq!(self.hour(), 0);
+        assert_eq!(self.minute(), 0);
+        assert_eq!(self.second(), 0);
+        assert_eq!(self.nanosecond(), 0);
+        let end = self.clone().checked_add_months(Months::new(12))?;
+        Some(self.timestamp()..end.timestamp())
+    }
+    fn align_month(self) -> Option<Self> {
+        self.with_nanosecond(0)?
+            .with_second(0)?
+            .with_minute(0)?
+            .with_hour(0)?
+            .with_day(1)
+    }
+
+    fn range_month(self) -> Option<Range<i64>> {
+        assert_eq!(self.day(), 1);
+        assert_eq!(self.hour(), 0);
+        assert_eq!(self.minute(), 0);
+        assert_eq!(self.second(), 0);
+        assert_eq!(self.nanosecond(), 0);
+        let end = self.clone().checked_add_months(Months::new(1))?;
+        Some(self.timestamp()..end.timestamp())
+    }
+    fn align_day(self) -> Option<Self> {
+        self.with_nanosecond(0)?
+            .with_second(0)?
+            .with_minute(0)?
+            .with_hour(0)
+    }
+
+    fn range_day(self) -> Option<Range<i64>> {
+        assert_eq!(self.hour(), 0);
+        assert_eq!(self.minute(), 0);
+        assert_eq!(self.second(), 0);
+        assert_eq!(self.nanosecond(), 0);
+        let end = self.clone().checked_add_days(Days::new(1))?;
+        Some(self.timestamp()..end.timestamp())
+    }
+    fn align_hour(self) -> Option<Self> {
+        self.with_nanosecond(0)?.with_second(0)?.with_minute(0)
+    }
+
+    fn range_hour(self) -> Option<Range<i64>> {
+        assert_eq!(self.minute(), 0);
+        assert_eq!(self.second(), 0);
+        assert_eq!(self.nanosecond(), 0);
+        let end = self.clone().checked_add_signed(TimeDelta::hours(1))?;
+        Some(self.timestamp()..end.timestamp())
+    }
+    fn align_minute(self) -> Option<Self> {
+        self.with_nanosecond(0)?.with_second(0)
+    }
+
+    fn range_minute(self) -> Option<Range<i64>> {
+        assert_eq!(self.second(), 0);
+        assert_eq!(self.nanosecond(), 0);
+        let end = self.clone().checked_add_signed(TimeDelta::minutes(1))?;
+        Some(self.timestamp()..end.timestamp())
+    }
+}
+
 impl<T: TimeZone> TimeZoneExt for T {}
 
 /// Time spans contained in the timestamp range

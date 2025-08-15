@@ -17,6 +17,7 @@ pest = "2.8.1"
 pest_derive = "2.8.1"
 chrono-tz = { version = "0.10.4", features = ["serde"] }
 time-util = { path = "../time-util" }
+json = { path = "../json" }
 
 [build-dependencies]
 lalrpop = "0.22.2"

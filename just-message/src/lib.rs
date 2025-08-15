@@ -2,23 +2,26 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub instant: i64,
     pub content: String,
     pub person: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Response {
     Success,
     Text(String),
     Failure,
     Document {
-        main: String,
-        bytes: HashMap<String, Vec<u8>>,
-        sources: HashMap<String, String>,
+        main: &'static str,
+        bytes: HashMap<&'static str, Vec<u8>>,
+        sources: HashMap<&'static str, String>,
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalDateTime {
     pub year: i32,
     pub month: u32,

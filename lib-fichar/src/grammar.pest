@@ -11,26 +11,40 @@ year         = @{ ASCII_DIGIT{4} }
 year_month   = ${ year ~ ("/" | "-" | WHITESPACE+ ) ~ month_n }
 month_year   = ${ month_n ~ ("/" | "-" | WHITESPACE+ ) ~ year }
 time_zone    = @{ (LETTER | "/" | "_")+ }
-
+name         = @{ (LETTER | "-" | "'")+ }
+bool_true    = @{ "true" }
+bool_false   = @{ "false" }
+bool         =  { bool_true | bool_false }
+targets      =  { target* }
+target       = ${ "@" ~ (target_index | target_all | target_me) }
+target_index = ${ number }
+target_all   = ${ "all"}
+target_me    = ${ "me"}
 
 command = {
     SOI ~ (
-        command_set_time_zone         |
-        command_enter_now_hour_minute |
-        command_enter_now             |
-        command_leave_now_hour_minute |
-        command_leave_now             |
-        command_month_year_month      |
-        command_month_now_month       |
-        command_month_now
+        command_persons           |
+        command_new_person        |
+        command_person_admin      |
+        command_set_time_zone     |
+        command_enter_hour_minute |
+        command_enter             |
+        command_leave_hour_minute |
+        command_leave             |
+        command_month_year_month  |
+        command_month_month       |
+        command_month
     ) ~ EOI
 }
 
-command_set_time_zone         = { "set"? ~ "time" ~ "zone" ~ time_zone }
-command_enter_now             = { enter }
-command_enter_now_hour_minute = { enter ~ hour_minute }
-command_leave_now             = { leave }
-command_leave_now_hour_minute = { leave ~ hour_minute }
-command_month_now             = { month }
-command_month_now_month       = { month? ~ month_n }
-command_month_year_month      = { month? ~ (year_month | month_year) }
+command_persons           = { "persons" }
+command_person_admin      = { "person" ~ target ~ "admin" ~ bool }
+command_new_person        = { "person" ~ "new" ~ name+ }
+command_set_time_zone     = { "set" ~ "time" ~ "zone" ~ time_zone }
+command_enter             = { enter }
+command_enter_hour_minute = { enter ~ hour_minute }
+command_leave             = { leave }
+command_leave_hour_minute = { leave ~ hour_minute }
+command_month             = { month ~ target* ~ targets }
+command_month_month       = { month? ~ month_n ~ targets }
+command_month_year_month  = { month? ~ (year_month | month_year) ~ targets }

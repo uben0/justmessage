@@ -1,0 +1,9 @@
+[package]
+name = "json"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+indoc = "2.0.6"
+pest = "2.8.1"
+pest_derive = "2.8.1"
