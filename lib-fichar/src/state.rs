@@ -1,5 +1,6 @@
 use super::{Error, Person, Span, validate};
 use chrono_tz::Tz;
+use just_message::Language;
 use serde::{Deserialize, Serialize};
 use slab::Slab;
 use std::{cmp::Ordering, ops::Range};
@@ -8,6 +9,7 @@ use time_util::{DaySpan, TimeZoneExt};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct State {
     pub time_zone: Tz,
+    pub language: Language,
     persons: Slab<Person>,
 }
 
@@ -159,6 +161,7 @@ impl Eq for State {}
 impl Default for State {
     fn default() -> Self {
         Self {
+            language: Language::En,
             time_zone: Tz::UTC,
             persons: [(
                 0,

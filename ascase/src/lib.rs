@@ -4,7 +4,7 @@ use std::{
 };
 
 #[derive(Debug, Clone)]
-pub struct AsSnakeCase<I> {
+pub struct ToKebabCase<I> {
     first: bool,
     pending: Option<char>,
     input: I,
@@ -12,7 +12,7 @@ pub struct AsSnakeCase<I> {
 
 // TODO: rename to kebab case
 #[derive(Debug, Clone)]
-pub struct FromSnakeCase {
+pub struct FromKebabCase {
     first: bool,
     sep: bool,
     buffer: String,
@@ -20,10 +20,15 @@ pub struct FromSnakeCase {
 
 pub trait AsCase {
     type Iter;
-    fn as_snake_case(self) -> AsSnakeCase<Self::Iter>;
+    fn to_kebab_case(self) -> ToKebabCase<Self::Iter>;
 }
 
-impl FromSnakeCase {
+impl Default for FromKebabCase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl FromKebabCase {
     pub fn new() -> Self {
         Self {
             first: true,
@@ -45,20 +50,22 @@ impl FromSnakeCase {
         self.first = false;
         self.sep = false;
     }
-    pub fn to_string(self) -> String {
-        self.buffer
+}
+impl Display for FromKebabCase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.buffer)
     }
 }
 
 impl<'a> AsCase for &'a str {
     type Iter = Chars<'a>;
 
-    fn as_snake_case(self) -> AsSnakeCase<Self::Iter> {
-        AsSnakeCase::new(self.chars())
+    fn to_kebab_case(self) -> ToKebabCase<Self::Iter> {
+        ToKebabCase::new(self.chars())
     }
 }
 
-impl<I> AsSnakeCase<I>
+impl<I> ToKebabCase<I>
 where
     I: Iterator<Item = char>,
 {
@@ -71,7 +78,7 @@ where
     }
 }
 
-impl<I> Iterator for AsSnakeCase<I>
+impl<I> Iterator for ToKebabCase<I>
 where
     I: Iterator<Item = char>,
 {
@@ -94,7 +101,7 @@ where
     }
 }
 
-impl<I> Display for AsSnakeCase<I>
+impl<I> Display for ToKebabCase<I>
 where
     I: Iterator<Item = char> + Clone,
 {

@@ -86,7 +86,7 @@ fn main() {
                     person,
                 };
                 prompts(prompt);
-                println!("{}", s)
+                println!("{s}")
             })
             .unwrap_or_else(|| {
                 let mut buffer = String::new();
@@ -136,7 +136,7 @@ fn main() {
                                 .parse()
                                 .unwrap();
                             let script =
-                                std::fs::read_to_string(format!("gen/script-{}", script)).unwrap();
+                                std::fs::read_to_string(format!("gen/script-{script}")).unwrap();
                             queue.extend(script.lines().map(|s| s.to_string()));
                         }
                         _ => unreachable!(),
@@ -145,7 +145,7 @@ fn main() {
                 Err(err) => {
                     failure(prompt);
                     std::io::stdout().flush().unwrap();
-                    println!("{:#?}", err);
+                    println!("{err:#?}");
                 }
             }
         } else {
@@ -165,7 +165,7 @@ fn main() {
                         success(prompt);
                         std::io::stdout().flush().unwrap();
                     }
-                    Response::Text(response) => println!("{}", response),
+                    Response::Text(response) => println!("{response}"),
                     Response::Failure => {
                         failure(prompt);
                         std::io::stdout().flush().unwrap();
@@ -179,8 +179,7 @@ fn main() {
                         println!("rendering...");
                         let image_png = renderer.render(main, sources, bytes);
                         println!("writing image...");
-                        std::fs::write(format!("gen/cli/out-{}.png", doc_index), image_png)
-                            .unwrap();
+                        std::fs::write(format!("gen/cli/out-{doc_index}.png"), image_png).unwrap();
                         doc_index += 1;
                     }
                 }

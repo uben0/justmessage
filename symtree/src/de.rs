@@ -1,11 +1,14 @@
 use super::error::{Error, Result};
-use ascase::{AsCase, FromSnakeCase};
+use ascase::{AsCase, FromKebabCase};
 use codepoint::{next_code_point, try_next_code_point};
 use serde::{
     Deserialize,
     de::{DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor},
 };
-use std::{io::Read, str::Bytes};
+use std::{
+    io::{BufReader, Read},
+    str::Bytes,
+};
 
 pub trait Reader {
     fn next_char(&mut self) -> Result<Option<char>>;
@@ -78,7 +81,7 @@ where
     T: Deserialize<'a>,
     R: Read,
 {
-    let mut deserializer = Deserializer::new(ReaderFromIo(reader.bytes()));
+    let mut deserializer = Deserializer::new(ReaderFromIo(BufReader::new(reader).bytes()));
     let t = T::deserialize(&mut deserializer)?;
     deserializer.skip_whitespace()?;
     if deserializer.peeked?.is_none() {
@@ -138,7 +141,7 @@ impl<R: Reader> Deserializer<R> {
 
     fn parse_ident(&mut self) -> Result<String> {
         self.skip_whitespace()?;
-        let mut ident = FromSnakeCase::new();
+        let mut ident = FromKebabCase::new();
         while let Some(c) = self.next_if(|c| c.is_alphanumeric() || c == '-')? {
             ident.push(c);
         }
@@ -534,7 +537,7 @@ impl<'a, 'de, R: Reader> serde::de::Deserializer<'de> for &'a mut Deserializer<R
         V: Visitor<'de>,
     {
         self.expects("(".chars())?;
-        self.expects(name.as_snake_case())?;
+        self.expects(name.to_kebab_case())?;
         let value = visitor.visit_seq(&mut *self)?;
         self.expects(")".chars())?;
         Ok(value)

@@ -1,5 +1,5 @@
 use chrono::{
-    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Range};
@@ -301,6 +301,7 @@ impl Date {
 
 #[test]
 fn test_time_hint_month() {
+    use chrono::Utc;
     let ymd_hms = |year, month, day, hour, minute, second| {
         Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
             .single()

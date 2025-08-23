@@ -1,152 +1,379 @@
-use crate::{Command, Error, PersonHint, Rule, TimeHintMinute, TimeHintMonth};
+use crate::{Command, Error, PersonHint, TimeHintMinute, TimeHintMonth};
 use chrono_tz::Tz;
-use pest::{Parser, iterators::Pair};
-// use pest_derive::Parser;
-use std::str::FromStr;
+use just_message::Language;
+use pest::{Parser, RuleType, iterators::Pair};
+use unicode_normalization::UnicodeNormalization;
 
-// mod en {
-
-//     #[derive(super::Parser)]
-//     #[grammar = "grammar.pest"]
-//     #[grammar = "grammar-en.pest"]
-//     struct CommandParser;
-// }
-// mod es {
-//     #[derive(super::Parser)]
-//     #[grammar = "grammar.pest"]
-//     #[grammar = "grammar-es.pest"]
-//     struct CommandParser;
-// }
-
-impl FromStr for Command {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match Self::parse(Rule::command, s) {
-            Ok(mut pairs) => {
-                let command = pairs.next().unwrap().into_inner().next().unwrap();
-
-                Ok(match command.as_rule() {
-                    Rule::command_help => Self::Help,
-                    Rule::command_persons => Self::Persons,
-                    Rule::command_span => {
-                        let [enter, leave] = command.children();
-                        let [hour, minute] = enter.children();
-                        let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
-                        let [hour, minute] = leave.children();
-                        let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
-                        Self::SpanHint { enter, leave }
-                    }
-                    Rule::command_enter => Self::EnterHint {
-                        time_hint: TimeHintMinute::None,
-                    },
-                    Rule::command_leave => Self::LeaveHint {
-                        time_hint: TimeHintMinute::None,
-                    },
-                    Rule::command_enter_hour_minute => {
-                        let [hour, minute] = command.child().children();
-                        Self::EnterHint {
-                            time_hint: TimeHintMinute::HourMinute(
-                                parse_u32(hour),
-                                parse_u32(minute),
-                            ),
-                        }
-                    }
-                    Rule::command_leave_hour_minute => {
-                        let [hour, minute] = command.child().children();
-                        Self::LeaveHint {
-                            time_hint: TimeHintMinute::HourMinute(
-                                parse_u32(hour),
-                                parse_u32(minute),
-                            ),
-                        }
-                    }
-                    Rule::command_month => {
-                        let targets = command.child();
-                        Self::MonthHint {
-                            person_hint: parse_targets(targets),
-                            time_hint: TimeHintMonth::None,
-                        }
-                    }
-                    Rule::command_month_month => {
-                        let [month, targets] = command.children();
-                        Self::MonthHint {
-                            person_hint: parse_targets(targets),
-                            time_hint: TimeHintMonth::Month(parse_month(month)),
-                        }
-                    }
-                    Rule::command_month_year_month => {
-                        let [month, targets] = command.children();
-                        let order = month.as_rule();
-                        let [lhs, rhs] = month.children();
-                        let (year, month) = match order {
-                            Rule::year_month => (lhs, rhs),
-                            Rule::month_year => (rhs, lhs),
-                            _ => unreachable!(),
-                        };
-                        Self::MonthHint {
-                            person_hint: parse_targets(targets),
-                            time_hint: TimeHintMonth::YearMonth(
-                                parse_year(year),
-                                parse_month(month),
-                            ),
-                        }
-                    }
-                    Rule::command_set_time_zone => {
-                        let time_zone = command.child();
-                        Self::SetTimeZone {
-                            time_zone: parse_time_zone(time_zone)?,
-                        }
-                    }
-                    Rule::command_new_person => Self::PersonNew {
-                        names: command
-                            .into_inner()
-                            .map(|name| name.as_str().to_string())
-                            .collect(),
-                        admin: false,
-                    },
-                    Rule::command_person_admin => {
-                        let [person, admin] = command.children();
-                        let person = parse_u32(person.child());
-                        let admin = parse_bool(admin);
-                        Self::PersonAdmin { person, admin }
-                    }
-                    _ => {
-                        dbg!(command);
-                        todo!()
-                    }
-                })
-            }
-            Err(err) => Err(Error::Parsing(err)),
+macro_rules! common_node_def {
+    ([$($rule:ident),* $(,)?]) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[allow(non_camel_case_types)]
+        enum Node {
+            $($rule,)*
         }
+
+    };
+}
+macro_rules! common_node_impl {
+    ($language:ident, [$($rule:ident),* $(,)?]) => {
+        impl From<$language::Rule> for Node {
+            fn from(rule: $language::Rule) -> Node {
+                match rule {
+                    $($language::Rule::$rule => Node::$rule,)*
+                }
+            }
+        }
+        impl From<Node> for $language::Rule{
+            fn from(node: Node) -> $language::Rule {
+                match node {
+                    $(Node::$rule => $language::Rule::$rule,)*
+                }
+            }
+        }
+    };
+}
+
+macro_rules! common_node {
+    ([$($language:ident),* $(,)?], $rules:tt) => {
+        common_node_def!($rules);
+        $(common_node_impl!($language, $rules);)*
+    };
+}
+
+common_node!(
+    [en, es],
+    [
+        EOI,
+        WHITESPACE,
+        word,
+        hour_minute,
+        number,
+        year,
+        year_month,
+        month_year,
+        time_zone,
+        name,
+        bool,
+        targets,
+        target,
+        target_index,
+        target_all,
+        target_me,
+        month_n,
+        command,
+        command_help,
+        command_persons,
+        command_person_admin,
+        command_new_person,
+        command_set_time_zone,
+        command_set_language,
+        command_span,
+        command_enter,
+        command_enter_hour_minute,
+        command_leave,
+        command_leave_hour_minute,
+        command_month,
+        command_month_month,
+        command_month_year_month,
+        bool_true,
+        bool_false,
+        enter,
+        leave,
+        month,
+        month_01,
+        month_02,
+        month_03,
+        month_04,
+        month_05,
+        month_06,
+        month_07,
+        month_08,
+        month_09,
+        month_10,
+        month_11,
+        month_12,
+    ]
+);
+
+pub mod en {
+    use pest_derive::Parser;
+
+    #[derive(Parser)]
+    #[grammar = "grammar.pest"]
+    #[grammar = "grammar-en.pest"]
+    pub struct CommandParser;
+}
+pub mod es {
+    use pest_derive::Parser;
+
+    #[derive(Parser)]
+    #[grammar = "grammar.pest"]
+    #[grammar = "grammar-es.pest"]
+    pub struct CommandParser;
+}
+
+pub fn parse(language: Language, s: &str) -> Result<Command, Error> {
+    match language {
+        Language::En => parse_typed::<en::CommandParser, en::Rule>(s),
+        Language::Es => parse_typed::<es::CommandParser, es::Rule>(s),
     }
 }
-fn parse_month(node: Pair<Rule>) -> u32 {
-    match node.as_rule() {
-        Rule::month_july => 7,
-        Rule::month_august => 8,
-        _ => todo!(),
+
+fn parse_typed<P, R>(s: &str) -> Result<Command, Error>
+where
+    P: Parser<R>,
+    R: RuleType + From<Node> + Into<Node>,
+{
+    match P::parse(R::from(Node::command), s) {
+        Ok(mut pairs) => {
+            let command = pairs.next().unwrap().into_inner().next().unwrap();
+
+            Ok(match command.as_rule().into() {
+                Node::command_help => Command::Help,
+                Node::command_persons => Command::Persons,
+                Node::command_span => {
+                    let [enter, leave] = command.children();
+                    let [hour, minute] = enter.children();
+                    let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    let [hour, minute] = leave.children();
+                    let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    Command::SpanHint { enter, leave }
+                }
+                Node::command_enter => Command::EnterHint {
+                    time_hint: TimeHintMinute::None,
+                },
+                Node::command_leave => Command::LeaveHint {
+                    time_hint: TimeHintMinute::None,
+                },
+                Node::command_enter_hour_minute => {
+                    let [hour, minute] = command.child().children();
+                    Command::EnterHint {
+                        time_hint: TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute)),
+                    }
+                }
+                Node::command_leave_hour_minute => {
+                    let [hour, minute] = command.child().children();
+                    Command::LeaveHint {
+                        time_hint: TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute)),
+                    }
+                }
+                Node::command_month => {
+                    let targets = command.child();
+                    Command::MonthHint {
+                        person_hint: parse_targets(targets),
+                        time_hint: TimeHintMonth::None,
+                    }
+                }
+                Node::command_month_month => {
+                    let [month, targets] = command.children();
+                    Command::MonthHint {
+                        person_hint: parse_targets(targets),
+                        time_hint: TimeHintMonth::Month(parse_month(month)),
+                    }
+                }
+                Node::command_month_year_month => {
+                    let [month, targets] = command.children();
+                    let order = month.as_rule().into();
+                    let [lhs, rhs] = month.children();
+                    let (year, month) = match order {
+                        Node::year_month => (lhs, rhs),
+                        Node::month_year => (rhs, lhs),
+                        _ => unreachable!(),
+                    };
+                    Command::MonthHint {
+                        person_hint: parse_targets(targets),
+                        time_hint: TimeHintMonth::YearMonth(parse_year(year), parse_month(month)),
+                    }
+                }
+                Node::command_set_time_zone => {
+                    let time_zone = command.child();
+                    Command::SetTimeZone {
+                        time_zone: parse_time_zone(time_zone)?,
+                    }
+                }
+                Node::command_set_language => {
+                    let language = command.child();
+                    Command::SetLanguage {
+                        language: parse_language(language)?,
+                    }
+                }
+                Node::command_new_person => Command::PersonNew {
+                    names: command
+                        .into_inner()
+                        .map(|name| name.as_str().to_string())
+                        .collect(),
+                    admin: false,
+                },
+                Node::command_person_admin => {
+                    let [person, admin] = command.children();
+                    let person = parse_u32(person.child());
+                    let admin = parse_bool(admin);
+                    Command::PersonAdmin { person, admin }
+                }
+                _ => {
+                    dbg!(command);
+                    todo!()
+                }
+            })
+        }
+        Err(_) => Err(Error::Parsing),
     }
 }
-fn parse_bool(node: Pair<Rule>) -> bool {
-    assert_eq!(node.as_rule(), Rule::bool);
+
+// impl FromStr for Command {
+//     type Err = Error;
+
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         match Self::parse(Rule::command, s) {
+//             Ok(mut pairs) => {
+//                 let command = pairs.next().unwrap().into_inner().next().unwrap();
+
+//                 Ok(match command.as_rule() {
+//                     Rule::command_help => Self::Help,
+//                     Rule::command_persons => Self::Persons,
+//                     Rule::command_span => {
+//                         let [enter, leave] = command.children();
+//                         let [hour, minute] = enter.children();
+//                         let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+//                         let [hour, minute] = leave.children();
+//                         let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+//                         Self::SpanHint { enter, leave }
+//                     }
+//                     Rule::command_enter => Self::EnterHint {
+//                         time_hint: TimeHintMinute::None,
+//                     },
+//                     Rule::command_leave => Self::LeaveHint {
+//                         time_hint: TimeHintMinute::None,
+//                     },
+//                     Rule::command_enter_hour_minute => {
+//                         let [hour, minute] = command.child().children();
+//                         Self::EnterHint {
+//                             time_hint: TimeHintMinute::HourMinute(
+//                                 parse_u32(hour),
+//                                 parse_u32(minute),
+//                             ),
+//                         }
+//                     }
+//                     Rule::command_leave_hour_minute => {
+//                         let [hour, minute] = command.child().children();
+//                         Self::LeaveHint {
+//                             time_hint: TimeHintMinute::HourMinute(
+//                                 parse_u32(hour),
+//                                 parse_u32(minute),
+//                             ),
+//                         }
+//                     }
+//                     Rule::command_month => {
+//                         let targets = command.child();
+//                         Self::MonthHint {
+//                             person_hint: parse_targets(targets),
+//                             time_hint: TimeHintMonth::None,
+//                         }
+//                     }
+//                     Rule::command_month_month => {
+//                         let [month, targets] = command.children();
+//                         Self::MonthHint {
+//                             person_hint: parse_targets(targets),
+//                             time_hint: TimeHintMonth::Month(parse_month(month)),
+//                         }
+//                     }
+//                     Rule::command_month_year_month => {
+//                         let [month, targets] = command.children();
+//                         let order = month.as_rule();
+//                         let [lhs, rhs] = month.children();
+//                         let (year, month) = match order {
+//                             Rule::year_month => (lhs, rhs),
+//                             Rule::month_year => (rhs, lhs),
+//                             _ => unreachable!(),
+//                         };
+//                         Self::MonthHint {
+//                             person_hint: parse_targets(targets),
+//                             time_hint: TimeHintMonth::YearMonth(
+//                                 parse_year(year),
+//                                 parse_month(month),
+//                             ),
+//                         }
+//                     }
+//                     Rule::command_set_time_zone => {
+//                         let time_zone = command.child();
+//                         Self::SetTimeZone {
+//                             time_zone: parse_time_zone(time_zone)?,
+//                         }
+//                     }
+//                     Rule::command_new_person => Self::PersonNew {
+//                         names: command
+//                             .into_inner()
+//                             .map(|name| name.as_str().to_string())
+//                             .collect(),
+//                         admin: false,
+//                     },
+//                     Rule::command_person_admin => {
+//                         let [person, admin] = command.children();
+//                         let person = parse_u32(person.child());
+//                         let admin = parse_bool(admin);
+//                         Self::PersonAdmin { person, admin }
+//                     }
+//                     _ => {
+//                         dbg!(command);
+//                         todo!()
+//                     }
+//                 })
+//             }
+//             Err(err) => Err(Error::Parsing(err)),
+//         }
+//     }
+// }
+fn parse_month<R>(node: Pair<R>) -> u32
+where
+    R: RuleType + Into<Node>,
+{
+    match node.as_rule().into() {
+        Node::month_01 => 1,
+        Node::month_02 => 2,
+        Node::month_03 => 3,
+        Node::month_04 => 4,
+        Node::month_05 => 5,
+        Node::month_06 => 6,
+        Node::month_07 => 7,
+        Node::month_08 => 8,
+        Node::month_09 => 9,
+        Node::month_10 => 10,
+        Node::month_11 => 11,
+        Node::month_12 => 12,
+        _ => unreachable!(),
+    }
+}
+fn parse_bool<R>(node: Pair<R>) -> bool
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::bool);
     let node = node.into_inner().next().unwrap();
-    match node.as_rule() {
-        Rule::bool_true => true,
-        Rule::bool_false => false,
+    match node.as_rule().into() {
+        Node::bool_true => true,
+        Node::bool_false => false,
         _ => panic!(),
     }
 }
-fn parse_u32(node: Pair<Rule>) -> u32 {
-    assert_eq!(node.as_rule(), Rule::number);
+fn parse_u32<R>(node: Pair<R>) -> u32
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::number);
     node.as_str().parse().unwrap()
 }
-fn parse_year(node: Pair<Rule>) -> i32 {
-    assert_eq!(node.as_rule(), Rule::year);
+fn parse_year<R>(node: Pair<R>) -> i32
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::year);
     node.as_str().parse().unwrap()
 }
-fn parse_time_zone(node: Pair<Rule>) -> Result<Tz, Error> {
-    assert_eq!(node.as_rule(), Rule::time_zone);
+fn parse_time_zone<R>(node: Pair<R>) -> Result<Tz, Error>
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::time_zone);
     match node.as_str() {
         "paris" | "Paris" => Ok(Tz::Europe__Paris),
         "madrid" | "Madrid" => Ok(Tz::Europe__Madrid),
@@ -155,20 +382,38 @@ fn parse_time_zone(node: Pair<Rule>) -> Result<Tz, Error> {
             .map_err(|_| Error::InvalidTimeZone(node.as_str().to_string())),
     }
 }
-fn parse_targets(node: Pair<Rule>) -> Vec<PersonHint> {
-    assert_eq!(node.as_rule(), Rule::targets);
+fn parse_language<R>(node: Pair<R>) -> Result<Language, Error>
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::word);
+    let language = node.as_str().normalize();
+    match language.as_str() {
+        "en" | "english" | "ingles" => Ok(Language::En),
+        "es" | "spanish" | "espanol" => Ok(Language::Es),
+        _ => Err(Error::InvalidLanguage(language)),
+    }
+}
+fn parse_targets<R>(node: Pair<R>) -> Vec<PersonHint>
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::targets);
     node.into_inner().map(parse_target).collect()
 }
-fn parse_target(node: Pair<Rule>) -> PersonHint {
-    assert_eq!(node.as_rule(), Rule::target);
+fn parse_target<R>(node: Pair<R>) -> PersonHint
+where
+    R: RuleType + Into<Node>,
+{
+    assert_eq!(node.as_rule().into(), Node::target);
     let target = node.child();
-    match target.as_rule() {
-        Rule::target_index => {
+    match target.as_rule().into() {
+        Node::target_index => {
             let index = target.child();
             PersonHint::Index(parse_u32(index))
         }
-        Rule::target_all => PersonHint::All,
-        Rule::target_me => PersonHint::Me,
+        Node::target_all => PersonHint::All,
+        Node::target_me => PersonHint::Me,
         _ => unreachable!(),
     }
 }
@@ -176,7 +421,10 @@ trait NodeExt: Sized {
     fn child(self) -> Self;
     fn children<const N: usize>(self) -> [Self; N];
 }
-impl<'a> NodeExt for Pair<'a, Rule> {
+impl<'a, R> NodeExt for Pair<'a, R>
+where
+    R: RuleType,
+{
     fn child(self) -> Self {
         self.into_inner().next().unwrap()
     }
@@ -196,3 +444,22 @@ trait IterFetchArray: Iterator {
     }
 }
 impl<T> IterFetchArray for T where T: Iterator {}
+
+trait StringNormalization {
+    fn normalize(&self) -> String;
+}
+impl StringNormalization for str {
+    fn normalize(&self) -> String {
+        self.nfd()
+            // .filter(|&c| !unicode_normalization::char::is_combining_mark(c))
+            .filter(|&c| char::is_alphabetic(c))
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    }
+}
+
+#[test]
+fn test_string_normalization() {
+    assert_eq!("marché".normalize(), "marche");
+    assert_eq!("ESPAÑOL".normalize(), "espanol");
+}

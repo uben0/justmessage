@@ -1,10 +1,4 @@
 WHITESPACE   = _{ " " }
-enter        = _{ ^"enter" }
-leave        = _{ ^"leave" }
-month        = _{ ^"month" }
-month_n      = _{ month_july | month_august }
-month_july   = @{ "7" | "07" | ^"jully" | ^"jul" }
-month_august = @{ "8" | "08" | ^"august" | ^"aug" }
 hour_minute  = ${ number ~ ":" ~ number | number ~ ^"h" ~ number ~ ^"m"? }
 number       = @{ ASCII_DIGIT+ }
 year         = @{ ASCII_DIGIT{4} }
@@ -18,6 +12,21 @@ target       = ${ "@" ~ (target_index | target_all | target_me) }
 target_index = ${ number }
 target_all   = ${ ^"all"}
 target_me    = ${ ^"me"}
+month_n      = _{
+    month_01 |
+    month_02 |
+    month_03 |
+    month_04 |
+    month_05 |
+    month_06 |
+    month_07 |
+    month_08 |
+    month_09 |
+    month_10 |
+    month_11 |
+    month_12
+}
+word = @{ (LETTER | "-")+ }
 
 command = {
     SOI ~ (
@@ -26,6 +35,7 @@ command = {
         command_new_person        |
         command_person_admin      |
         command_set_time_zone     |
+        command_set_language      |
         command_span              |
         command_enter_hour_minute |
         command_enter             |
@@ -42,6 +52,7 @@ command_persons           = { ^"persons" }
 command_person_admin      = { ^"person" ~ target ~ ^"admin" ~ bool }
 command_new_person        = { ^"person" ~ ^"new" ~ name+ }
 command_set_time_zone     = { ^"set" ~ ^"time" ~ ^"zone" ~ time_zone }
+command_set_language      = { ^"set" ~ ^"language" ~ word }
 command_span              = { hour_minute ~ hour_minute }
 command_enter             = { enter }
 command_enter_hour_minute = { enter ~ hour_minute }

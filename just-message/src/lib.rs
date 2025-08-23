@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use time_util::LocalDateTime;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    En,
+    Es,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub instant: i64,

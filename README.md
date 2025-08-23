@@ -1,5 +1,7 @@
 # ROADMAP
 
+- [ ] clippy
+- [ ] rename bot
 - [ ] span day select
   - [ ] day hint
 - [ ] languages

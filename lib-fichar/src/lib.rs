@@ -1,8 +1,7 @@
 use chrono::{Datelike, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
 use indoc::indoc;
-use just_message::{JustMessage, Message, Response};
-use pest_derive::Parser;
+use just_message::{JustMessage, Language, Message, Response};
 use serde::{Deserialize, Serialize};
 pub use state::State;
 use std::{
@@ -38,6 +37,7 @@ pub enum Direction {
 
 #[derive(Debug)]
 pub enum Error {
+    UnsupportedLanguage(Language),
     InvalidSpan {
         enter: LocalDateTime,
         leave: LocalDateTime,
@@ -46,7 +46,8 @@ pub enum Error {
     InvalidMonth(u32),
     InconsistentEntry(Span),
     InvalidTimeZone(String),
-    Parsing(pest::error::Error<Rule>),
+    InvalidLanguage(String),
+    Parsing,
     InvalidTimeHint,
     InvalidDateTime(Date, Time),
     InvalidTimeOp,
@@ -120,9 +121,9 @@ impl PersonHint {
     }
 }
 
-#[derive(Parser, Debug, Clone)]
-#[grammar = "grammar.pest"]
-#[grammar = "grammar-en.pest"]
+#[derive(Debug, Clone)]
+// #[grammar = "grammar.pest"]
+// #[grammar = "grammar-en.pest"]
 pub enum Command {
     Help,
     Nope,
@@ -161,6 +162,9 @@ pub enum Command {
     },
     SetTimeZone {
         time_zone: Tz,
+    },
+    SetLanguage {
+        language: Language,
     },
     PersonAdmin {
         person: u32,
@@ -280,6 +284,11 @@ impl State {
                 self.time_zone = time_zone;
                 Ok(Output::None)
             }
+            Command::SetLanguage { language } => {
+                validate::admin(person, self)?;
+                self.language = language;
+                Ok(Output::None)
+            }
             Command::Nope => Ok(Output::None),
             Command::PersonNew { names, admin } => {
                 let person = self.new_person(names, admin);
@@ -320,9 +329,7 @@ fn failure(iter: impl IntoIterator<Item = Response>) -> Vec<Response> {
 
 impl JustMessage for State {
     fn message(&mut self, message: Message) -> Vec<Response> {
-        let result = message
-            .content
-            .parse()
+        let result = command_parser::parse(self.language, &message.content)
             .map(|command| self.command(command, message.person, message.instant));
         let result = match result {
             Ok(result) => result,
@@ -332,8 +339,9 @@ impl JustMessage for State {
             Ok(res) => match res {
                 Output::Enter { previous } => match previous {
                     Some(previous) => success([Response::Text(format!(
-                        "overriden {}-{:0>2}-{:0>2} {}:{:0>2}",
-                        previous.year, previous.month, previous.day, previous.hour, previous.minute
+                        "overriden {} {}",
+                        previous.date().display_ymd("-"),
+                        previous.time().display_hm(":")
                     ))]),
                     None => success([]),
                 },
@@ -351,20 +359,16 @@ impl JustMessage for State {
                 )]),
                 Output::RemovedSpans(spans) => success(spans.into_iter().map(|span| {
                     Response::Text(format!(
-                        "Removed {}-{:0>2}-{:0>2} {}:{:0>2} {}:{:0>2}",
-                        span.date.year,
-                        span.date.month,
-                        span.date.day,
-                        span.enters.hour,
-                        span.enters.minute,
-                        span.leaves.hour,
-                        span.leaves.minute
+                        "Removed {} {} {}",
+                        span.date.display_ymd("-"),
+                        span.enters.display_hm(":"),
+                        span.leaves.display_hm(":"),
                     ))
                 })),
                 Output::Persons(persons) => success(
                     persons
                         .into_iter()
-                        .map(|(index, name)| Response::Text(format!("@{} {}", index, name))),
+                        .map(|(index, name)| Response::Text(format!("@{index} {name}"))),
                 ),
                 Output::None => success([]),
                 Output::Month(months) => {
@@ -378,20 +382,35 @@ impl JustMessage for State {
                     }))
                 }
                 Output::NewPerson(person) => {
-                    success([Response::Text(format!("Person @{} created", person))]).into()
+                    success([Response::Text(format!("Person @{person} created"))]).into()
                 }
             },
-            Err(Error::InvalidSpan { enter, leave }) => failure([Response::Text(format!(
-                indoc! {"
-                    Span has leave instant earlier than enter instant:
-                        - enter {} {}
-                        - leave {} {}
-                "},
-                enter.date().display_ymd("-"),
-                enter.time().display_hm("h"),
-                leave.date().display_ymd("-"),
-                leave.time().display_hm("h")
-            ))]),
+            Err(Error::InvalidSpan { enter, leave }) => {
+                failure([Response::Text(match self.language {
+                    Language::En => format!(
+                        indoc! {"
+                            The time span has leave instant earlier than enter instant:
+                                - enter {} {}
+                                - leave {} {}
+                        "},
+                        enter.date().display_ymd("-"),
+                        enter.time().display_hm("h"),
+                        leave.date().display_ymd("-"),
+                        leave.time().display_hm("h")
+                    ),
+                    Language::Es => format!(
+                        indoc! {"
+                            El tramo de tiempo tiene instante de salida antes del instante de entrada:
+                                - entra {} {}
+                                - sale {} {}
+                        "},
+                        enter.date().display_ymd("-"),
+                        enter.time().display_hm("h"),
+                        leave.date().display_ymd("-"),
+                        leave.time().display_hm("h")
+                    ),
+                })])
+            }
             Err(err) => Response::err(&err),
         }
     }

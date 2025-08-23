@@ -208,7 +208,7 @@ where
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<()> {
-        write!(self.output, "({})", variant.as_snake_case())?;
+        write!(self.output, "({})", variant.to_kebab_case())?;
         Ok(())
     }
 
@@ -273,7 +273,7 @@ where
         Ok(self)
     }
     fn serialize_struct(self, name: &'static str, _len: usize) -> Result<Self::SerializeStruct> {
-        write!(self.output, "({}", name.as_snake_case())?;
+        write!(self.output, "({}", name.to_kebab_case())?;
         self.indent();
         self.sep = Sep::LineOrSpace;
         Ok(self)
@@ -286,7 +286,7 @@ where
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant> {
-        write!(self.output, "({}", variant.as_snake_case())?;
+        write!(self.output, "({}", variant.to_kebab_case())?;
         self.indent();
         self.sep = Sep::LineOrSpace;
         Ok(self)

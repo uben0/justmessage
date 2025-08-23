@@ -1,12 +1,18 @@
+use aes_gcm::{
+    AeadCore, Aes256Gcm, Key, KeyInit, Nonce,
+    aead::{Aead, OsRng},
+};
 use axum::{Router, extract::State, routing::post};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use hyper::StatusCode;
 use just_message::{JustMessage, Message as AppMessage, Response as AppResponse};
 use lib_fichar::State as AppFichar;
+use pbkdf2::pbkdf2_hmac_array;
 use render::Renderer;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use slab::Slab;
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, io::Write};
 use tokio::{
     net::TcpListener,
     sync::mpsc::{self, Receiver, Sender},
@@ -16,23 +22,65 @@ use tracing::{Level, info, warn};
 
 #[derive(Parser)]
 struct Args {
-    invitation: String,
     #[arg(long)]
-    token: Option<String>,
+    key: Option<String>,
+    #[arg(long)]
+    webhook: bool,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Load,
+    New {
+        invitation: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { token, invitation } = Args::parse();
-    let token = token.unwrap_or_else(|| {
-        dotenvy::dotenv().ok();
-        std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap()
-    });
+    let Args {
+        key,
+        webhook,
+        command,
+    } = Args::parse();
 
     tracing_subscriber::fmt()
         .with_target(false)
         .compact()
         .init();
+    dotenvy::dotenv().ok();
+
+    let key = key.unwrap_or_else(|| {
+        std::env::var("JUSTMESSAGE_KEY").expect("key not set in environment variables")
+    });
+    let key = pbkdf2_hmac_array::<Sha256, 32>(key.as_bytes(), &[], 100_000);
+    info!("key derived");
+
+    let state = match command {
+        Command::Load => load_state(key),
+        Command::New { token, invitation } => FrontState {
+            connections: HashMap::new(),
+            instances: Slab::from_iter([(0, AppFichar::default())]),
+            invitations: HashMap::from([(
+                invitation,
+                Connection {
+                    instance: 0,
+                    person: 0,
+                    admin: true,
+                },
+            )]),
+            token: token.unwrap_or_else(|| {
+                std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN")
+                    .expect("telegram bot token not set in environmnet variables")
+            }),
+        },
+    };
+    let token = state.token.clone();
+
     // let tls_config = ServerConfig::builder()
     //     .with_no_client_auth()
     //     .with_single_cert(
@@ -41,14 +89,19 @@ async fn main() {
     //     )
     //     .unwrap();
 
-    let response = telegram::set_webhook(&token, "fr1.justmessage.uben.ovh".into())
-        .drop_pending_updates()
-        .send()
-        .await
-        .unwrap();
-    let status = response.status();
-    println!("{:#?}", response.text().await.unwrap());
-    assert_eq!(status.as_u16(), 200);
+    if webhook {
+        // TODO: retry loop
+        let response = telegram::set_webhook(&state.token, "fr1.justmessage.uben.ovh".into())
+            .drop_pending_updates()
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        if !status.is_success() {
+            warn!("fail to set webhook {:?}", response.text().await.unwrap());
+        }
+        assert_eq!(status.as_u16(), 200);
+    }
 
     let tcp_listener = TcpListener::bind("[::1]:8000").await.unwrap();
 
@@ -61,16 +114,44 @@ async fn main() {
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         );
-    let processor = tokio::spawn(process(token.clone(), receiver, invitation));
+    let processor = tokio::spawn(process(state, receiver));
     axum::serve(tcp_listener, app)
         .with_graceful_shutdown(wait_terminate_signal())
         .await
         .unwrap();
 
-    processor.await.unwrap();
+    let state = processor.await.unwrap();
 
-    telegram::delete_webhook(&token).await.logged();
+    if webhook {
+        telegram::delete_webhook(&token).await.logged();
+    }
+
+    save_state(key, &state);
+
     info!("successful exit");
+}
+
+fn load_state(key: [u8; 32]) -> FrontState {
+    let key = Key::<Aes256Gcm>::from(key);
+    let cipher = Aes256Gcm::new(&key);
+
+    let bytes = std::fs::read("state").unwrap();
+    let nonce = Nonce::from_slice(&bytes[..12]);
+    let bytes = cipher.decrypt(&nonce, &bytes[12..]).unwrap();
+    postcard::from_bytes(&bytes).unwrap()
+}
+fn save_state(key: [u8; 32], state: &FrontState) {
+    let key = Key::<Aes256Gcm>::from(key);
+    let cipher = Aes256Gcm::new(&key);
+
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    // let nonce = Nonce::from([0; 12]);
+    assert_eq!(nonce.len(), 12);
+    let bytes = postcard::to_allocvec(state).unwrap();
+    let bytes = cipher.encrypt(&nonce, bytes.as_slice()).unwrap();
+    let mut file = File::create("state").unwrap();
+    file.write_all(&nonce).unwrap();
+    file.write_all(&bytes).unwrap();
 }
 
 async fn wait_terminate_signal() {
@@ -80,6 +161,7 @@ async fn wait_terminate_signal() {
         _ = tokio::signal::ctrl_c() => (),
         _ = termination .recv() => (),
     }
+    println!();
     info!("received termination signal");
 }
 
@@ -107,28 +189,17 @@ struct Chat {
 
 async fn handler(sender: State<Sender<Update>>, body: String) -> StatusCode {
     if let Ok(update) = serde_json::from_str(&body) {
-        println!("{:#?}", update);
+        println!("{update:#?}");
         sender.send(update).await.unwrap();
     } else {
-        eprintln!("failed to parse body {}", body);
+        eprintln!("failed to parse body {body}");
     }
     StatusCode::OK
 }
 
-async fn process(token: String, mut receiver: Receiver<Update>, invitation: String) {
-    let mut state = FrontState {
-        connections: HashMap::new(),
-        instances: Slab::from_iter([(0, AppFichar::default())]),
-        invitations: HashMap::from([(
-            invitation,
-            Connection {
-                instance: 0,
-                person: 0,
-                admin: true,
-            },
-        )]),
-    };
+async fn process(mut state: FrontState, mut receiver: Receiver<Update>) -> FrontState {
     let renderer = Renderer::new();
+    info!("listening for messages");
     while let Some(update) = receiver.recv().await {
         let chat_id = update.message.chat.id;
         match state.connections.get(&update.message.chat.id) {
@@ -152,20 +223,22 @@ async fn process(token: String, mut receiver: Receiver<Update>, invitation: Stri
                 let responses = state.instances[instance as usize].message(AppMessage {
                     instant: update.message.date,
                     content: update.message.text,
-                    person: person,
+                    person,
                 });
                 for response in responses {
                     match response {
                         AppResponse::Success => {
-                            telegram::send_text(&token, "ok".into(), chat_id)
+                            telegram::send_text(&state.token, "ok".into(), chat_id)
                                 .await
                                 .logged();
                         }
                         AppResponse::Text(text) => {
-                            telegram::send_text(&token, text, chat_id).await.logged();
+                            telegram::send_text(&state.token, text, chat_id)
+                                .await
+                                .logged();
                         }
                         AppResponse::Failure => {
-                            telegram::send_text(&token, "fail".into(), chat_id)
+                            telegram::send_text(&state.token, "fail".into(), chat_id)
                                 .await
                                 .logged();
                         }
@@ -175,7 +248,7 @@ async fn process(token: String, mut receiver: Receiver<Update>, invitation: Stri
                             sources,
                         } => {
                             let image = renderer.render(main, sources, bytes);
-                            telegram::send_photo(&token, image, update.message.chat.id)
+                            telegram::send_photo(&state.token, image, update.message.chat.id)
                                 .await
                                 .logged();
                         }
@@ -184,6 +257,7 @@ async fn process(token: String, mut receiver: Receiver<Update>, invitation: Stri
             }
         }
     }
+    state
 }
 
 trait Logged {
@@ -209,9 +283,10 @@ struct Connection {
     admin: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FrontState {
     connections: HashMap<i64, Connection>,
     instances: Slab<AppFichar>,
     invitations: HashMap<String, Connection>,
+    token: String,
 }
