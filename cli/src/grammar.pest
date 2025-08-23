@@ -1,16 +1,18 @@
 WHITESPACE = _{ " " }
+number     = @{ ASCII_DIGIT+ }
+
 command = { "/" ~ (
-    command_load |
-    command_quit |
-    command_save |
+    command_load   |
+    command_quit   |
+    command_save   |
     command_script |
-    command_reset |
+    command_reset  |
     command_person
 ) }
-command_reset = { "reset" }
-command_load = { "load" }
-command_quit = { "quit" }
-command_save = { "save" }
+
+command_reset  = { "reset" }
+command_load   = { "load" }
+command_quit   = { "quit" }
+command_save   = { "save" }
 command_person = { "person" ~ number }
 command_script = { "script" ~ number }
-number = @{ ASCII_DIGIT+ }

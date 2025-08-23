@@ -1,18 +1,33 @@
 #import "@preview/oxifmt:1.0.0": strfmt
-#set page(width: auto, height: auto)
+#set page(width: auto, height: auto, margin: 1cm)
 
-#let spans = json("spans.json")
+#let infos = json("month.json")
 
 #let fmt-date((year, month, day)) = {
   strfmt("{:0>4}-{:0>2}-{:0>2}", year, month, day)
 }
-
 #let fmt-time((hour, minute, second)) = {
   strfmt("{:0>2}:{:0>2}", hour, minute)
 }
-
 #let fmt-duration((hours, minutes, seconds)) = {
-  strfmt("{}:{:0>2}", hours, minutes)
+  strfmt("{}h{:0>2}m", hours, minutes)
+}
+#let fmt-month(month) = {
+  let months = (
+    [January],
+    [February],
+    [Mars],
+    [April],
+    [May],
+    [June],
+    [Jully],
+    [August],
+    [September],
+    [October],
+    [November],
+    [December],
+  );
+  months.at(month - 1)
 }
 
 
@@ -24,9 +39,13 @@
   (hours: hours, minutes: minutes, seconds: seconds)
 }
 
+= #infos.year #fmt-month(infos.month)
+
+== #infos.name
+
 #table(columns: 4,
   table.header([date], [enter], [leave], [duration]),
-  .. spans.map(
+  .. infos.spans.map(
     span => (
       fmt-date(span.date),
       fmt-time(span.enters),
@@ -36,7 +55,7 @@
   ).flatten()
 )
 
-#let total = spans.map(span => span.seconds).sum(default: 0)
+#let total = infos.spans.map(span => span.seconds).sum(default: 0)
 #let total = seconds-hms(total)
 
 Total: #fmt-duration(total)

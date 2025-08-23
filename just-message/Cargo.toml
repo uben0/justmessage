@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 serde = "1.0.219"
+time-util = { path = "../time-util" }

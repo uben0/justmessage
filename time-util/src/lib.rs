@@ -1,8 +1,8 @@
 use chrono::{
-    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike,
+    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
 };
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
+use std::{fmt::Display, ops::Range};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct Date {
@@ -19,10 +19,42 @@ pub struct Time {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct DaySpan {
-    date: Date,
-    enters: Time,
-    leaves: Time,
-    seconds: u32,
+    pub date: Date,
+    pub enters: Time,
+    pub leaves: Time,
+    pub seconds: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalDateTime {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub week_day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub offset: i32,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum TimeHintMinute {
+    None,
+    Hour(u32),
+    HourMinute(u32, u32),
+}
+#[derive(Debug, Clone, Copy)]
+pub enum TimeHintDay {
+    None,
+    Weekday(u32),
+    Day(u32),
+    MonthDay(u32, u32),
+    YearMonth(i32, u32, u32),
+}
+#[derive(Debug, Clone, Copy)]
+pub enum TimeHintMonth {
+    None,
+    Month(u32),
+    YearMonth(i32, u32),
 }
 
 pub trait TimeZoneExt: TimeZone + Clone {
@@ -179,4 +211,107 @@ impl From<NaiveTime> for Time {
             second: time.second(),
         }
     }
+}
+
+impl TimeHintMinute {
+    pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
+        let instant = time_zone.timestamp_opt(instant, 0).single()?;
+        Some(match self {
+            Self::None => instant.align_minute()?.range_minute()?,
+            Self::Hour(hour) => instant.align_day()?.with_hour(hour)?.range_minute()?,
+            Self::HourMinute(hour, minute) => instant
+                .align_day()?
+                .with_hour(hour)?
+                .with_minute(minute)?
+                .range_minute()?,
+        })
+    }
+}
+impl TimeHintMonth {
+    pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
+        Some(match self {
+            Self::None => time_zone
+                .timestamp_opt(instant, 0)
+                .single()?
+                .align_month()?
+                .range_month()?,
+            Self::Month(month) => time_zone
+                .timestamp_opt(instant, 0)
+                .single()?
+                .align_year()?
+                .with_month(month)?
+                .range_month()?,
+            Self::YearMonth(year, month) => time_zone
+                .with_ymd_and_hms(year, month, 1, 0, 0, 0)
+                .single()?
+                .range_month()?,
+        })
+    }
+}
+
+impl LocalDateTime {
+    pub fn date(&self) -> Date {
+        Date {
+            year: self.year,
+            month: self.month,
+            day: self.day,
+        }
+    }
+    pub fn time(&self) -> Time {
+        Time {
+            hour: self.hour,
+            minute: self.minute,
+            second: self.second,
+        }
+    }
+}
+
+pub struct TimeDisplayHourMinute {
+    time: Time,
+    sep: &'static str,
+}
+impl Display for TimeDisplayHourMinute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}{:0>2}", self.time.hour, self.sep, self.time.minute)
+    }
+}
+impl Time {
+    pub fn display_hm(self, sep: &'static str) -> TimeDisplayHourMinute {
+        TimeDisplayHourMinute { time: self, sep }
+    }
+}
+pub struct DateDisplayYearMonthDay {
+    date: Date,
+    sep: &'static str,
+}
+impl Display for DateDisplayYearMonthDay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{}{:0>2}{}{:0>2}",
+            self.date.year, self.sep, self.date.month, self.sep, self.date.day
+        )
+    }
+}
+impl Date {
+    pub fn display_ymd(self, sep: &'static str) -> DateDisplayYearMonthDay {
+        DateDisplayYearMonthDay { date: self, sep }
+    }
+}
+
+#[test]
+fn test_time_hint_month() {
+    let ymd_hms = |year, month, day, hour, minute, second| {
+        Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .unwrap()
+            .timestamp()
+    };
+    let instant = ymd_hms(2025, 8, 21, 20, 15, 0);
+    let month_start = ymd_hms(2025, 8, 1, 0, 0, 0);
+    let month_end = ymd_hms(2025, 9, 1, 0, 0, 0);
+    assert_eq!(
+        TimeHintMonth::None.infer(Utc, instant),
+        Some(month_start..month_end)
+    );
 }

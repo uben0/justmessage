@@ -1,14 +1,17 @@
-use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use chrono::{Datelike, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
-use just_message::{JustMessage, LocalDateTime, Message, Response};
+use indoc::indoc;
+use just_message::{JustMessage, Message, Response};
 use pest_derive::Parser;
 use serde::{Deserialize, Serialize};
 pub use state::State;
-use std::{collections::HashMap, ops::Range};
-use time_util::{Date, DateTimeExt, Time};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
+use time_util::{Date, DaySpan, LocalDateTime, Time, TimeHintMinute, TimeHintMonth, TimeZoneExt};
 
 mod command_parser;
-mod interpret;
 mod state;
 #[cfg(test)]
 mod test;
@@ -17,14 +20,14 @@ mod test;
 pub struct Person {
     names: Vec<String>,
     admin: bool,
+    entered: Option<i64>,
     spans: Vec<Span>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Span {
-    pub person: u32,
-    pub instant: i64,
-    pub direction: Direction,
+    enter: i64,
+    leave: i64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,27 +38,27 @@ pub enum Direction {
 
 #[derive(Debug)]
 pub enum Error {
+    InvalidSpan {
+        enter: LocalDateTime,
+        leave: LocalDateTime,
+    },
     InvalidPerson(u32),
     InvalidMonth(u32),
     InconsistentEntry(Span),
     InvalidTimeZone(String),
-    Parsing(String),
+    Parsing(pest::error::Error<Rule>),
     InvalidTimeHint,
     InvalidDateTime(Date, Time),
     InvalidTimeOp,
     PermissionDenied,
     ExpectingOnePerson,
+    NotEnteredYet,
 }
 
 mod validate {
+    use just_message::JustMessage;
+
     use super::{Error, State};
-    pub fn month(month: u32) -> Result<(), Error> {
-        if let (1..=12) = month {
-            Ok(())
-        } else {
-            Err(Error::InvalidMonth(month))
-        }
-    }
     pub fn person(person: u32, state: &State) -> Result<(), Error> {
         state.person(person)?;
         Ok(())
@@ -67,19 +70,29 @@ mod validate {
             Err(Error::PermissionDenied)
         }
     }
+    pub fn span(enter: i64, leave: i64, state: &State) -> Result<(), Error> {
+        if enter < leave {
+            Ok(())
+        } else {
+            Err(Error::InvalidSpan {
+                enter: state.local_date_time(enter),
+                leave: state.local_date_time(leave),
+            })
+        }
+    }
 }
 
-impl Span {
-    pub fn enters(&self) -> bool {
-        self.direction == Direction::Enters
-    }
-    pub fn leaves(&self) -> bool {
-        self.direction == Direction::Leaves
-    }
-    pub fn key(&self) -> (i64, u32) {
-        (self.instant, self.person)
-    }
-}
+// impl Span {
+//     pub fn enters(&self) -> bool {
+//         self.direction == Direction::Enters
+//     }
+//     pub fn leaves(&self) -> bool {
+//         self.direction == Direction::Leaves
+//     }
+//     pub fn key(&self) -> (i64, u32) {
+//         (self.instant, self.person)
+//     }
+// }
 
 #[derive(Debug, Clone)]
 enum PersonHint {
@@ -97,11 +110,11 @@ impl PersonHint {
             Self::Name(_) => todo!(),
         }
     }
-    fn infer_any(self, me: u32, state: &State) -> Vec<u32> {
+    fn infer_any(self, me: u32, state: &State) -> HashSet<u32> {
         match self {
-            PersonHint::Me => Vec::from([me]),
+            PersonHint::Me => HashSet::from([me]),
             PersonHint::All => state.persons().collect(),
-            PersonHint::Index(person) => Vec::from([person]),
+            PersonHint::Index(person) => HashSet::from([person]),
             PersonHint::Name(_) => todo!(),
         }
     }
@@ -109,23 +122,41 @@ impl PersonHint {
 
 #[derive(Parser, Debug, Clone)]
 #[grammar = "grammar.pest"]
+#[grammar = "grammar-en.pest"]
 pub enum Command {
+    Help,
     Nope,
     Persons,
-    EnterInstant(i64),
-    EnterTimeHint(TimeHintMinute),
-    LeaveInstant(i64),
-    LeaveTimeHint(TimeHintMinute),
+    Span {
+        enter: i64,
+        leave: i64,
+    },
+    SpanHint {
+        enter: TimeHintMinute,
+        leave: TimeHintMinute,
+    },
+    Enter {
+        enter: i64,
+    },
+    EnterHint {
+        time_hint: TimeHintMinute,
+    },
+    Leave {
+        leave: i64,
+    },
+    LeaveHint {
+        time_hint: TimeHintMinute,
+    },
     PersonNew {
         names: Vec<String>,
         admin: bool,
     },
     MonthHint {
-        person_hint: PersonHint,
+        person_hint: Vec<PersonHint>,
         time_hint: TimeHintMonth,
     },
     Month {
-        persons: Vec<u32>,
+        persons: HashSet<u32>,
         month: Range<i64>,
     },
     SetTimeZone {
@@ -137,64 +168,60 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum TimeHintMonth {
-    None,
-    Month(u32),
-    YearMonth(i32, u32),
-}
-impl TimeHintMonth {
-    fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
-        Some(match self {
-            Self::None => time_zone
-                .timestamp_opt(instant, 0)
-                .single()?
-                .align_month()?
-                .range_month()?,
-            Self::Month(month) => time_zone
-                .timestamp_opt(instant, 0)
-                .single()?
-                .align_year()?
-                .with_month(month)?
-                .range_month()?,
-            Self::YearMonth(year, month) => time_zone
-                .with_ymd_and_hms(year, month, 1, 0, 0, 0)
-                .single()?
-                .range_month()?,
-        })
-    }
-}
-#[derive(Debug, Clone, Copy)]
-pub enum TimeHintMinute {
-    None,
-    Hour(u32),
-    HourMinute(u32, u32),
-}
-impl TimeHintMinute {
-    fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
-        let instant = time_zone.timestamp_opt(instant, 0).single()?;
-        Some(match self {
-            Self::None => instant.align_minute()?.range_minute()?,
-            Self::Hour(hour) => instant.align_day()?.with_hour(hour)?.range_minute()?,
-            Self::HourMinute(hour, minute) => instant
-                .align_day()?
-                .with_hour(hour)?
-                .with_minute(minute)?
-                .range_minute()?,
-        })
-    }
-}
-
 enum Output {
     None,
-    Month { json: Vec<Vec<u8>> },
+    Help,
+    Month(Vec<OutputMonth>),
     NewPerson(u32),
     Persons(Vec<(u32, String)>),
+    RemovedSpans(Vec<DaySpan>),
+    Enter { previous: Option<LocalDateTime> },
+}
+#[derive(Debug, Clone, Serialize)]
+struct OutputMonth {
+    name: String,
+    year: i32,
+    month: u32,
+    spans: Vec<DaySpan>,
 }
 
 impl State {
     fn command(&mut self, command: Command, person: u32, instant: i64) -> Result<Output, Error> {
         match command {
+            Command::Enter { enter } => Ok(Output::Enter {
+                previous: self
+                    .enters(person, enter)?
+                    .map(|instant| self.local_date_time(instant)),
+            }),
+            Command::Leave { leave } => self.leaves(person, leave).map(|spans| {
+                Output::RemovedSpans(
+                    spans
+                        .into_iter()
+                        .flat_map(|span| self.time_zone.days(span.enter..span.leave))
+                        .collect(),
+                )
+            }),
+            Command::EnterHint { time_hint } => self.command(
+                Command::Enter {
+                    enter: time_hint
+                        .infer(self.time_zone, instant)
+                        .ok_or(Error::InvalidTimeHint)?
+                        .start,
+                },
+                person,
+                instant,
+            ),
+            Command::LeaveHint { time_hint } => self.command(
+                Command::Leave {
+                    leave: time_hint
+                        .infer(self.time_zone, instant)
+                        .ok_or(Error::InvalidTimeHint)?
+                        .start,
+                },
+                person,
+                instant,
+            ),
+            Command::Help => Ok(Output::Help),
             Command::Persons => Ok(Output::Persons(
                 self.persons()
                     .map(|i| (i, self.person(i).unwrap().names.join(" ")))
@@ -206,38 +233,48 @@ impl State {
                 Ok(Output::None)
             }
             Command::MonthHint {
-                person_hint,
+                mut person_hint,
                 time_hint,
-            } => self.command(
-                Command::Month {
-                    persons: person_hint.infer_any(person, self),
-                    month: time_hint
+            } => {
+                if person_hint.is_empty() {
+                    person_hint = Vec::from([PersonHint::Me]);
+                }
+                self.command(
+                    Command::Month {
+                        persons: person_hint
+                            .into_iter()
+                            .flat_map(|hint| hint.infer_any(person, self))
+                            .collect(),
+                        month: time_hint
+                            .infer(self.time_zone, instant)
+                            .ok_or(Error::InvalidTimeHint)?,
+                    },
+                    person,
+                    instant,
+                )
+            }
+            Command::SpanHint { enter, leave } => self.command(
+                Command::Span {
+                    enter: enter
                         .infer(self.time_zone, instant)
-                        .ok_or(Error::InvalidTimeHint)?,
+                        .ok_or(Error::InvalidTimeHint)?
+                        .start,
+                    leave: leave
+                        .infer(self.time_zone, instant)
+                        .ok_or(Error::InvalidTimeHint)?
+                        .start,
                 },
                 person,
                 instant,
             ),
-            Command::EnterTimeHint(time_hint) => self.command(
-                Command::EnterInstant(
-                    time_hint
-                        .infer(self.time_zone, instant)
-                        .ok_or(Error::InvalidTimeHint)?
-                        .start,
-                ),
-                person,
-                instant,
-            ),
-            Command::LeaveTimeHint(time_hint) => self.command(
-                Command::LeaveInstant(
-                    time_hint
-                        .infer(self.time_zone, instant)
-                        .ok_or(Error::InvalidTimeHint)?
-                        .start,
-                ),
-                person,
-                instant,
-            ),
+            Command::Span { enter, leave } => self.add_span(person, enter, leave).map(|spans| {
+                Output::RemovedSpans(
+                    spans
+                        .into_iter()
+                        .flat_map(|span| self.time_zone.days(span.enter..span.leave))
+                        .collect(),
+                )
+            }),
             Command::SetTimeZone { time_zone } => {
                 validate::admin(person, self)?;
                 self.time_zone = time_zone;
@@ -247,68 +284,120 @@ impl State {
             Command::PersonNew { names, admin } => {
                 let person = self.new_person(names, admin);
                 Ok(Output::NewPerson(person))
-                // Ok(Response::Text(format!("new person {}", person)))
             }
-            Command::Month { persons, month } => Ok(Output::Month {
-                json: persons
-                    .into_iter()
-                    .map(|person| {
-                        self.select(person, month.clone())
-                            .map(|spans| serde_json::to_string_pretty(&spans).unwrap().into())
-                    })
-                    .collect::<Result<Vec<Vec<u8>>, Error>>()?,
-            }),
-            Command::EnterInstant(instant) => self
-                .add_entry(person, Direction::Enters, instant)
-                .map(|_| Output::None),
-            Command::LeaveInstant(instant) => self
-                .add_entry(person, Direction::Leaves, instant)
-                .map(|_| Output::None),
-            // cmd => todo!("{:#?}", cmd),
+            Command::Month { persons, month } => {
+                let date = self.local_date_time(month.start);
+                Ok(Output::Month(
+                    persons
+                        .into_iter()
+                        .map(|person| {
+                            Ok(OutputMonth {
+                                name: self.person(person)?.names.join(" "),
+                                year: date.year,
+                                month: date.month,
+                                spans: self.select(person, month.clone())?,
+                            })
+                        })
+                        .collect::<Result<Vec<OutputMonth>, Error>>()?,
+                ))
+            }
         }
     }
 }
 
 const TEMPLATE_MONTH: &str = include_str!("spans.typ");
 
+fn success(iter: impl IntoIterator<Item = Response>) -> Vec<Response> {
+    let mut res = Vec::from([Response::Success]);
+    res.extend(iter);
+    res
+}
+fn failure(iter: impl IntoIterator<Item = Response>) -> Vec<Response> {
+    let mut res = Vec::from([Response::Failure]);
+    res.extend(iter);
+    res
+}
+
 impl JustMessage for State {
     fn message(&mut self, message: Message) -> Vec<Response> {
-        match message.content.parse() {
-            Ok(command) => match self.command(command, message.person, message.instant) {
-                Ok(res) => match res {
-                    Output::Persons(persons) => {
-                        let mut responses = Vec::from([Response::Success]);
-                        for (index, name) in persons {
-                            responses.push(Response::Text(format!("@{} {}", index, name)));
-                        }
-                        responses
-                    }
-                    Output::None => [Response::Success].into(),
-                    Output::Month { json } => {
-                        let mut responses = Vec::from([Response::Success]);
-                        for json in json {
-                            responses.push(Response::Document {
-                                main: TEMPLATE_MONTH,
-                                sources: HashMap::new(),
-                                bytes: HashMap::from([("spans.json", json)]),
-                            });
-                        }
-                        responses
-                    }
-                    Output::NewPerson(person) => [
-                        Response::Success,
-                        Response::Text(format!("Person @{} created", person)),
-                    ]
-                    .into(),
+        let result = message
+            .content
+            .parse()
+            .map(|command| self.command(command, message.person, message.instant));
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(res) => match res {
+                Output::Enter { previous } => match previous {
+                    Some(previous) => success([Response::Text(format!(
+                        "overriden {}-{:0>2}-{:0>2} {}:{:0>2}",
+                        previous.year, previous.month, previous.day, previous.hour, previous.minute
+                    ))]),
+                    None => success([]),
                 },
-                Err(err) => Response::err(&err),
+                Output::Help => success([Response::Text(
+                    indoc! {"
+                            month
+                            month @all
+                            2024/08
+                            2024/08 @all
+                            persons
+                            set time zone madrid
+                            18h30 21h00
+                        "}
+                    .to_string(),
+                )]),
+                Output::RemovedSpans(spans) => success(spans.into_iter().map(|span| {
+                    Response::Text(format!(
+                        "Removed {}-{:0>2}-{:0>2} {}:{:0>2} {}:{:0>2}",
+                        span.date.year,
+                        span.date.month,
+                        span.date.day,
+                        span.enters.hour,
+                        span.enters.minute,
+                        span.leaves.hour,
+                        span.leaves.minute
+                    ))
+                })),
+                Output::Persons(persons) => success(
+                    persons
+                        .into_iter()
+                        .map(|(index, name)| Response::Text(format!("@{} {}", index, name))),
+                ),
+                Output::None => success([]),
+                Output::Month(months) => {
+                    success(months.into_iter().map(|month| Response::Document {
+                        main: TEMPLATE_MONTH,
+                        sources: HashMap::new(),
+                        bytes: HashMap::from([(
+                            "month.json",
+                            serde_json::to_string_pretty(&month).unwrap().into(),
+                        )]),
+                    }))
+                }
+                Output::NewPerson(person) => {
+                    success([Response::Text(format!("Person @{} created", person))]).into()
+                }
             },
+            Err(Error::InvalidSpan { enter, leave }) => failure([Response::Text(format!(
+                indoc! {"
+                    Span has leave instant earlier than enter instant:
+                        - enter {} {}
+                        - leave {} {}
+                "},
+                enter.date().display_ymd("-"),
+                enter.time().display_hm("h"),
+                leave.date().display_ymd("-"),
+                leave.time().display_hm("h")
+            ))]),
             Err(err) => Response::err(&err),
         }
     }
 
     fn local_date_time(&self, instant: i64) -> LocalDateTime {
-        let date_time = DateTime::from_timestamp(instant, 0).unwrap();
+        let date_time = self.time_zone.timestamp_opt(instant, 0).earliest().unwrap();
         LocalDateTime {
             year: date_time.year(),
             month: date_time.month(),
@@ -317,7 +406,14 @@ impl JustMessage for State {
             hour: date_time.hour(),
             minute: date_time.minute(),
             second: date_time.second(),
-            offset: 0,
+            offset: date_time.offset().fix().local_minus_utc(),
         }
     }
 }
+
+// struct Displayer<T>(T);
+// impl Display for Displayer<LocalDateTime> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         todo!()
+//     }
+// }

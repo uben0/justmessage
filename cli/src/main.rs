@@ -12,6 +12,8 @@ use std::{
     process::Stdio,
 };
 
+// TODO: convert to API, with public/private key auth
+
 const UP: &str = "\x1b[1A";
 const DOWN: &str = "\x1b[1B";
 const START: &str = "\x1b[0G";

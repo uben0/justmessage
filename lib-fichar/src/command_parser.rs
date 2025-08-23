@@ -1,7 +1,22 @@
 use crate::{Command, Error, PersonHint, Rule, TimeHintMinute, TimeHintMonth};
 use chrono_tz::Tz;
 use pest::{Parser, iterators::Pair};
+// use pest_derive::Parser;
 use std::str::FromStr;
+
+// mod en {
+
+//     #[derive(super::Parser)]
+//     #[grammar = "grammar.pest"]
+//     #[grammar = "grammar-en.pest"]
+//     struct CommandParser;
+// }
+// mod es {
+//     #[derive(super::Parser)]
+//     #[grammar = "grammar.pest"]
+//     #[grammar = "grammar-es.pest"]
+//     struct CommandParser;
+// }
 
 impl FromStr for Command {
     type Err = Error;
@@ -12,36 +27,56 @@ impl FromStr for Command {
                 let command = pairs.next().unwrap().into_inner().next().unwrap();
 
                 Ok(match command.as_rule() {
+                    Rule::command_help => Self::Help,
                     Rule::command_persons => Self::Persons,
-                    Rule::command_enter => Self::EnterTimeHint(TimeHintMinute::None),
-                    Rule::command_leave => Self::LeaveTimeHint(TimeHintMinute::None),
+                    Rule::command_span => {
+                        let [enter, leave] = command.children();
+                        let [hour, minute] = enter.children();
+                        let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                        let [hour, minute] = leave.children();
+                        let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                        Self::SpanHint { enter, leave }
+                    }
+                    Rule::command_enter => Self::EnterHint {
+                        time_hint: TimeHintMinute::None,
+                    },
+                    Rule::command_leave => Self::LeaveHint {
+                        time_hint: TimeHintMinute::None,
+                    },
                     Rule::command_enter_hour_minute => {
                         let [hour, minute] = command.child().children();
-                        Self::EnterTimeHint(TimeHintMinute::HourMinute(
-                            parse_u32(hour),
-                            parse_u32(minute),
-                        ))
+                        Self::EnterHint {
+                            time_hint: TimeHintMinute::HourMinute(
+                                parse_u32(hour),
+                                parse_u32(minute),
+                            ),
+                        }
                     }
                     Rule::command_leave_hour_minute => {
                         let [hour, minute] = command.child().children();
-                        Self::LeaveTimeHint(TimeHintMinute::HourMinute(
-                            parse_u32(hour),
-                            parse_u32(minute),
-                        ))
+                        Self::LeaveHint {
+                            time_hint: TimeHintMinute::HourMinute(
+                                parse_u32(hour),
+                                parse_u32(minute),
+                            ),
+                        }
                     }
-                    Rule::command_month => Self::MonthHint {
-                        person_hint: PersonHint::Me,
-                        time_hint: TimeHintMonth::None,
-                    },
+                    Rule::command_month => {
+                        let targets = command.child();
+                        Self::MonthHint {
+                            person_hint: parse_targets(targets),
+                            time_hint: TimeHintMonth::None,
+                        }
+                    }
                     Rule::command_month_month => {
                         let [month, targets] = command.children();
                         Self::MonthHint {
-                            person_hint: PersonHint::Me,
+                            person_hint: parse_targets(targets),
                             time_hint: TimeHintMonth::Month(parse_month(month)),
                         }
                     }
                     Rule::command_month_year_month => {
-                        let month = command.child();
+                        let [month, targets] = command.children();
                         let order = month.as_rule();
                         let [lhs, rhs] = month.children();
                         let (year, month) = match order {
@@ -50,7 +85,7 @@ impl FromStr for Command {
                             _ => unreachable!(),
                         };
                         Self::MonthHint {
-                            person_hint: PersonHint::Me,
+                            person_hint: parse_targets(targets),
                             time_hint: TimeHintMonth::YearMonth(
                                 parse_year(year),
                                 parse_month(month),
@@ -82,7 +117,7 @@ impl FromStr for Command {
                     }
                 })
             }
-            Err(err) => Err(Error::Parsing(format!("{:?}", err))),
+            Err(err) => Err(Error::Parsing(err)),
         }
     }
 }
@@ -118,6 +153,23 @@ fn parse_time_zone(node: Pair<Rule>) -> Result<Tz, Error> {
         time_zone => time_zone
             .parse()
             .map_err(|_| Error::InvalidTimeZone(node.as_str().to_string())),
+    }
+}
+fn parse_targets(node: Pair<Rule>) -> Vec<PersonHint> {
+    assert_eq!(node.as_rule(), Rule::targets);
+    node.into_inner().map(parse_target).collect()
+}
+fn parse_target(node: Pair<Rule>) -> PersonHint {
+    assert_eq!(node.as_rule(), Rule::target);
+    let target = node.child();
+    match target.as_rule() {
+        Rule::target_index => {
+            let index = target.child();
+            PersonHint::Index(parse_u32(index))
+        }
+        Rule::target_all => PersonHint::All,
+        Rule::target_me => PersonHint::Me,
+        _ => unreachable!(),
     }
 }
 trait NodeExt: Sized {

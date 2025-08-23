@@ -1,16 +1,14 @@
-use super::{Direction, Error, Person, Span, validate};
-use chrono::{Months, TimeZone};
+use super::{Error, Person, Span, validate};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use slab::Slab;
-use std::{collections::HashMap, ops::Range};
+use std::{cmp::Ordering, ops::Range};
 use time_util::{DaySpan, TimeZoneExt};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct State {
     pub time_zone: Tz,
     persons: Slab<Person>,
-    entries: Vec<Span>,
 }
 
 impl State {
@@ -24,7 +22,21 @@ impl State {
             names,
             admin,
             spans: Vec::new(),
+            entered: None,
         }) as u32
+    }
+    pub fn enters(&mut self, person: u32, enter: i64) -> Result<Option<i64>, Error> {
+        validate::person(person, self)?;
+        Ok(self.persons[person as usize].entered.replace(enter))
+    }
+    pub fn leaves(&mut self, person: u32, leave: i64) -> Result<Vec<Span>, Error> {
+        validate::person(person, self)?;
+        let Some(enter) = self.persons[person as usize].entered else {
+            return Err(Error::NotEnteredYet);
+        };
+        validate::span(enter, leave, self)?;
+        self.persons[person as usize].entered = None;
+        self.add_span(person, enter, leave)
     }
     pub fn set_person_names(&mut self, person: u32, names: Vec<String>) -> Result<(), Error> {
         validate::person(person, self)?;
@@ -36,158 +48,97 @@ impl State {
         self.persons[person as usize].admin = admin;
         Ok(())
     }
-    pub fn add_entry(
-        &mut self,
-        person: u32,
-        direction: Direction,
-        instant: i64,
-    ) -> Result<(), Error> {
+    pub fn add_span(&mut self, person: u32, enter: i64, leave: i64) -> Result<Vec<Span>, Error> {
         validate::person(person, self)?;
-        let entry = Span {
-            person,
-            direction,
-            instant,
-        };
-        match self.entries.binary_search_by_key(&entry.key(), Span::key) {
-            Ok(found) => Err(Error::InconsistentEntry(self.entries[found])),
-            Err(insertion) => {
-                if direction
-                    == self
-                        .last_direction(person, instant)
-                        .unwrap_or(Direction::Leaves)
-                {
-                    Err(Error::InconsistentEntry(entry))
-                } else if let Some(first) = self.first_direction(person, instant)
-                    && first == direction
-                {
-                    Err(Error::InconsistentEntry(entry))
-                } else {
-                    self.entries.insert(insertion, entry);
-                    Ok(())
+        validate::span(enter, leave, self)?;
+        let span = Span { enter, leave };
+        let min = self
+            .person(person)?
+            .spans
+            .partition_point(|s| s.leave <= enter);
+        let max = self
+            .person(person)?
+            .spans
+            .partition_point(|s| s.enter < leave);
+        let removed = self.persons[person as usize]
+            .spans
+            .drain(min..max)
+            .collect();
+        self.persons[person as usize].spans.insert(min, span);
+        Ok(removed)
+    }
+    pub fn validate_entries(&self) -> Result<(), Error> {
+        for (_, person) in self.persons.iter() {
+            for &span in person.spans.iter() {
+                if span.enter >= span.leave {
+                    return Err(Error::InconsistentEntry(span));
+                }
+            }
+            for window in person.spans.windows(2) {
+                let &[a, b] = window else { unreachable!() };
+                if a.leave >= b.enter {
+                    return Err(Error::InconsistentEntry(b));
                 }
             }
         }
-    }
-    pub fn validate_entries(&self) -> Result<(), Error> {
-        for window in self.entries.windows(2) {
-            let &[a, b] = window else { unreachable!() };
-            if a.key() >= b.key() {
-                return Err(Error::InconsistentEntry(b));
-            }
-        }
-
-        let mut active = HashMap::new();
-        for &entry in &self.entries {
-            validate::person(entry.person, self)?;
-            let active = active.entry(entry.person).or_insert(false);
-            let new = match entry.direction {
-                Direction::Enters => true,
-                Direction::Leaves => false,
-            };
-            if *active == new {
-                return Err(Error::InconsistentEntry(entry));
-            }
-            *active = new;
-        }
-
         Ok(())
     }
-    pub fn last_direction(&self, person: u32, instant: i64) -> Option<Direction> {
-        validate::person(person, self).unwrap();
-        match self
-            .entries
-            .binary_search_by_key(&(instant, person), Span::key)
-        {
-            Ok(found) => Some(self.entries[found].direction),
-            Err(between) => self.entries[..between]
-                .iter()
-                .rev()
-                .find(|e| e.person == person)
-                .map(|e| e.direction),
-        }
+    pub fn at(&self, person: u32, instant: i64) -> Result<Result<usize, usize>, Error> {
+        Ok(self
+            .person(person)?
+            .spans
+            .binary_search_by(|elem| match () {
+                () if elem.leave < instant => Ordering::Less,
+                () if elem.enter >= instant => Ordering::Greater,
+                () => Ordering::Equal,
+            }))
     }
-    pub fn first_direction(&self, person: u32, instant: i64) -> Option<Direction> {
-        validate::person(person, self).unwrap();
-        match self
-            .entries
-            .binary_search_by_key(&(instant, person), Span::key)
-        {
-            Ok(found) => Some(self.entries[found].direction),
-            Err(between) => self.entries[between..]
-                .iter()
-                .find(|e| e.person == person)
-                .map(|e| e.direction),
-        }
-    }
-    pub fn is_active(&self, person: u32, instant: i64) -> bool {
-        validate::person(person, self).unwrap();
-        match self
-            .last_direction(person, instant)
-            .unwrap_or(Direction::Leaves)
-        {
-            Direction::Enters => true,
-            Direction::Leaves => false,
-        }
+    pub fn is_active(&self, person: u32, instant: i64) -> Result<bool, Error> {
+        Ok(match self.at(person, instant)? {
+            Ok(..) => true,
+            Err(..) => false,
+        })
     }
     pub fn select(&self, person: u32, range: Range<i64>) -> Result<Vec<DaySpan>, Error> {
         validate::person(person, self)?;
-
-        let mut active = self.is_active(person, range.start).then_some(range.start);
         let mut spans = Vec::new();
-        for &entry in self.entries(range.clone()) {
-            match (entry.direction, active.take()) {
-                (Direction::Enters, None) => {
-                    active = Some(entry.instant);
-                }
-                (Direction::Leaves, Some(start)) => {
-                    spans.extend(self.time_zone.days(start..entry.instant));
-                }
-                (_, _) => return Err(Error::InconsistentEntry(entry)),
-            }
-        }
-        if let Some(start) = active.take() {
-            spans.extend(self.time_zone.days(start..range.end));
-        }
-        Ok(spans)
-    }
-    pub fn select_month(&self, person: u32, year: i32, month: u32) -> Result<Vec<DaySpan>, Error> {
-        validate::month(month)?;
-        validate::person(person, self)?;
-
-        let range = {
-            let start = self
-                .time_zone
-                .with_ymd_and_hms(year, month, 1, 0, 0, 0)
-                .unwrap();
-            let end = start + Months::new(1);
-            start.timestamp()..end.timestamp()
-        };
-        let mut active = self.is_active(person, range.start).then_some(range.start);
-        let mut spans = Vec::new();
-        for &entry in self.entries(range.clone()) {
-            match (entry.direction, active.take()) {
-                (Direction::Enters, None) => {
-                    active = Some(entry.instant);
-                }
-                (Direction::Leaves, Some(start)) => {
-                    spans.extend(self.time_zone.days(start..entry.instant));
-                }
-                (_, _) => return Err(Error::InconsistentEntry(entry)),
-            }
-        }
-        if let Some(start) = active.take() {
-            spans.extend(self.time_zone.days(start..range.end));
+        for span in self.entries(person, range)? {
+            spans.extend(self.time_zone.days(span.enter..span.leave));
         }
         Ok(spans)
     }
 
-    pub fn entries(&self, range: Range<i64>) -> &[Span] {
-        let start = self.entries.partition_point(|e| e.instant < range.start);
-        let end = self.entries.partition_point(|e| e.instant < range.end);
-        &self.entries[start..end]
+    pub fn entries(
+        &self,
+        person: u32,
+        range: Range<i64>,
+    ) -> Result<impl Iterator<Item = Span>, Error> {
+        let start = range.start;
+        let end = range.end;
+        let min = self
+            .person(person)?
+            .spans
+            .partition_point(|s| s.leave <= range.start);
+        let max = self
+            .person(person)?
+            .spans
+            .partition_point(|s| s.enter < range.end);
+        Ok(self.person(person)?.spans[min..max]
+            .iter()
+            .filter_map(move |span| span.conjunction(start..end)))
     }
     pub fn persons(&self) -> impl Iterator<Item = u32> {
         self.persons.iter().map(|(k, _)| k as u32)
+    }
+}
+
+impl Span {
+    fn conjunction(self, range: Range<i64>) -> Option<Self> {
+        let selected = Self {
+            enter: self.enter.max(range.start),
+            leave: self.leave.min(range.end),
+        };
+        (selected.leave > selected.enter).then_some(selected)
     }
 }
 
@@ -201,7 +152,7 @@ impl PartialEq for State {
                 return false;
             }
         }
-        self.entries == self.entries
+        true
     }
 }
 impl Eq for State {}
@@ -215,11 +166,11 @@ impl Default for State {
                     names: ["admin".to_string()].into(),
                     admin: true,
                     spans: Vec::new(),
+                    entered: None,
                 },
             )]
             .into_iter()
             .collect(),
-            entries: Vec::new(),
         }
     }
 }
