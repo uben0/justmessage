@@ -203,12 +203,17 @@ async fn process(mut state: FrontState, mut receiver: Receiver<Update>) -> Front
     while let Some(update) = receiver.recv().await {
         let chat_id = update.message.chat.id;
         match state.connections.get(&update.message.chat.id) {
-            None => match state.invitations.get(update.message.text.trim()) {
-                Some(&connection) => {
+            None => match state.invitations.remove(update.message.text.trim()) {
+                Some(connection) => {
+                    telegram::send_text(&state.token, "joining".into(), chat_id)
+                        .await
+                        .logged();
                     state.connections.insert(update.message.chat.id, connection);
                 }
                 None => {
-                    println!("unknown invitation");
+                    telegram::send_text(&state.token, "unknown invitation".into(), chat_id)
+                        .await
+                        .logged();
                 }
             },
             Some(&Connection {
