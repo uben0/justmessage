@@ -3,9 +3,10 @@ use aes_gcm::{
     aead::{Aead, OsRng},
 };
 use axum::{Router, extract::State, routing::post};
+use chrono_tz::Tz;
 use clap::{Parser, Subcommand};
 use hyper::StatusCode;
-use just_message::{JustMessage, Message as AppMessage, Response as AppResponse};
+use just_message::{JustMessage, Language, Message as AppMessage, Response as AppResponse};
 use lib_fichar::State as AppFichar;
 use pbkdf2::pbkdf2_hmac_array;
 use render::Renderer;
@@ -64,7 +65,15 @@ async fn main() {
         Command::Load => load_state(key),
         Command::New { token, invitation } => FrontState {
             connections: HashMap::new(),
-            instances: Slab::from_iter([(0, AppFichar::default())]),
+            instances: Slab::from_iter([(
+                0,
+                AppFichar::new(
+                    "Atelier Bistrot".into(),
+                    Tz::Europe__Madrid,
+                    Language::Es,
+                    ["Eddie".into(), "Gerbais".into()].into(),
+                ),
+            )]),
             invitations: HashMap::from([(
                 invitation,
                 Connection {
@@ -221,10 +230,6 @@ async fn process(mut state: FrontState, mut receiver: Receiver<Update>) -> Front
                 person,
                 admin: _,
             }) => {
-                if update.message.text.trim() == "reset" {
-                    state.instances[instance as usize] = AppFichar::default();
-                    continue;
-                }
                 let responses = state.instances[instance as usize].message(AppMessage {
                     instant: update.message.date,
                     content: update.message.text,

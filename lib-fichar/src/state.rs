@@ -8,12 +8,29 @@ use time_util::{DaySpan, TimeZoneExt};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct State {
+    pub name: String,
     pub time_zone: Tz,
     pub language: Language,
     persons: Slab<Person>,
 }
 
 impl State {
+    pub fn new(name: String, time_zone: Tz, language: Language, names: Vec<String>) -> Self {
+        Self {
+            name,
+            time_zone,
+            language,
+            persons: Slab::from_iter([(
+                0,
+                Person {
+                    names,
+                    admin: true,
+                    entered: None,
+                    spans: Vec::new(),
+                },
+            )]),
+        }
+    }
     pub fn person(&self, person: u32) -> Result<&Person, Error> {
         self.persons
             .get(person as usize)
@@ -158,22 +175,22 @@ impl PartialEq for State {
     }
 }
 impl Eq for State {}
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            language: Language::En,
-            time_zone: Tz::UTC,
-            persons: [(
-                0,
-                Person {
-                    names: ["admin".to_string()].into(),
-                    admin: true,
-                    spans: Vec::new(),
-                    entered: None,
-                },
-            )]
-            .into_iter()
-            .collect(),
-        }
-    }
-}
+// impl Default for State {
+//     fn default() -> Self {
+//         Self {
+//             language: Language::En,
+//             time_zone: Tz::UTC,
+//             persons: [(
+//                 0,
+//                 Person {
+//                     names: ["admin".to_string()].into(),
+//                     admin: true,
+//                     spans: Vec::new(),
+//                     entered: None,
+//                 },
+//             )]
+//             .into_iter()
+//             .collect(),
+//         }
+//     }
+// }

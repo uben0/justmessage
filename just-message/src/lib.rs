@@ -29,7 +29,7 @@ pub enum Response {
     },
 }
 
-pub trait JustMessage: Serialize + Deserialize<'static> + Default {
+pub trait JustMessage: Serialize + Deserialize<'static> {
     fn message(&mut self, message: Message) -> Vec<Response>;
     fn local_date_time(&self, instant: i64) -> LocalDateTime;
 }

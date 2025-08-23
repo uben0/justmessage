@@ -1,5 +1,6 @@
 # ROADMAP
 
+- [ ] admin console
 - [ ] clippy
 - [ ] rename bot
 - [ ] span day select
