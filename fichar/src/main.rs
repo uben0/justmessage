@@ -13,7 +13,7 @@ async fn main() {
         .unwrap();
     println!("{response:#?}");
     let tls_conf =
-        RustlsConfig::from_pem_file("../certy/YOURPUBLIC.pem", "../certy/YOURPRIVATE.pem")
+        RustlsConfig::from_pem_file("../certy/YOURPUBLIC.pem", "../certy/YOURPRIVATE.key")
             .await
             .unwrap();
     let app = Router::new().route("/", post(handler));
