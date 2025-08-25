@@ -8,5 +8,6 @@ axum = "0.8.4"
 axum-server = { version = "0.7.2", features = ["tls-rustls-no-provider"] }
 clap = { version = "4.5.45", features = ["derive"] }
 dotenvy = "0.15.7"
+rcgen = "0.14.3"
 telegram = { path = "../telegram" }
 tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
