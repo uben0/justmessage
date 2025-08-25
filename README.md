@@ -10,16 +10,10 @@
 - [ ] languages
 - [x] enter then leave
 - [x] gracefull exit
-- [x] enable then disable webhook
-  - deleteWebhook
-- [ ] self-signed
-  - check webhook infos
-  - use filename with cert
-  - use fullchain.pem
-  - check tuto webhook
-- [ ] encryption
+- [x] self-signed
 - [ ] service
 - [ ] security
+  - [x] encryption
   - [ ] limits
-- [ ] whatsapp
+
 - [ ] telegram markdown

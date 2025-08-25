@@ -1,9 +1,34 @@
-use std::borrow::Cow;
-
 use reqwest::{
     Client, Error, RequestBuilder, Response,
     multipart::{Form, Part},
 };
+use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Update {
+    pub update_id: u64,
+    pub message: Message,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Message {
+    pub message_id: i32,
+    pub from: Person,
+    pub chat: Chat,
+    pub date: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Person {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Chat {
+    pub id: i64,
+}
 
 pub async fn send_photo(token: &str, photo: Vec<u8>, chat_id: i64) -> Result<Response, Error> {
     client(token, "sendPhoto")
@@ -33,6 +58,7 @@ pub fn set_webhook(token: &str, url: String) -> SetWebhook<'_> {
         url,
         drop_pending_updates: false,
         certificate: None,
+        secret_token: None,
     }
 }
 
@@ -41,6 +67,7 @@ pub struct SetWebhook<'a> {
     url: String,
     drop_pending_updates: bool,
     certificate: Option<Vec<u8>>,
+    secret_token: Option<String>,
 }
 impl<'a> SetWebhook<'a> {
     pub fn certificate(self, certificate: Vec<u8>) -> Self {
@@ -55,23 +82,29 @@ impl<'a> SetWebhook<'a> {
             ..self
         }
     }
+    pub fn secret_token(self, secret_token: String) -> Self {
+        Self {
+            secret_token: Some(secret_token),
+            ..self
+        }
+    }
     pub async fn send(self) -> Result<Response, Error> {
         client(self.token, "setWebhook")
             .multipart(
                 Form::new()
                     .part("url", Part::text(self.url))
-                    .part(
+                    .part_opt(
                         "drop_pending_updates",
-                        Part::text(if self.drop_pending_updates {
-                            "True"
-                        } else {
-                            "False"
-                        }),
+                        self.drop_pending_updates.then(|| Part::text("True")),
                     )
                     .part_opt(
                         "certificate",
                         self.certificate
                             .map(|cert| Part::bytes(cert).file_name("cert.pem")),
+                    )
+                    .part_opt(
+                        "secret_token",
+                        self.secret_token.map(|token| Part::text(token)),
                     ),
             )
             .send()
