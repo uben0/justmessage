@@ -9,11 +9,17 @@ use hyper::StatusCode;
 use just_message::{JustMessage, Language, Message as AppMessage, Response as AppResponse};
 use lib_fichar::State as AppFichar;
 use pbkdf2::pbkdf2_hmac_array;
+use pest::Parser as _;
 use render::Renderer;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use slab::Slab;
-use std::{collections::HashMap, fs::File, io::Write};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Write,
+    str::FromStr,
+};
 use tokio::{
     net::TcpListener,
     sync::mpsc::{self, Receiver, Sender},
@@ -41,6 +47,10 @@ enum Command {
     },
 }
 
+fn derive_key(key: &[u8]) -> [u8; 32] {
+    pbkdf2_hmac_array::<Sha256, 32>(key, &[], 100_000)
+}
+
 #[tokio::main]
 async fn main() {
     let Args {
@@ -58,12 +68,13 @@ async fn main() {
     let key = key.unwrap_or_else(|| {
         std::env::var("JUSTMESSAGE_KEY").expect("key not set in environment variables")
     });
-    let key = pbkdf2_hmac_array::<Sha256, 32>(key.as_bytes(), &[], 100_000);
+    let key = derive_key(key.as_bytes());
     info!("key derived");
 
     let state = match command {
         Command::Load => load_state(key),
         Command::New { token, invitation } => FrontState {
+            admins: HashSet::new(),
             connections: HashMap::new(),
             instances: Slab::from_iter([(
                 0,
@@ -123,7 +134,7 @@ async fn main() {
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         );
-    let processor = tokio::spawn(process(state, receiver));
+    let processor = tokio::spawn(process(key, state, receiver));
     axum::serve(tcp_listener, app)
         .with_graceful_shutdown(wait_terminate_signal())
         .await
@@ -206,61 +217,120 @@ async fn handler(sender: State<Sender<Update>>, body: String) -> StatusCode {
     StatusCode::OK
 }
 
-async fn process(mut state: FrontState, mut receiver: Receiver<Update>) -> FrontState {
+#[derive(pest_derive::Parser)]
+#[grammar = "super_command.pest"]
+struct SuperCommandParser;
+
+#[derive(Debug, Clone)]
+enum SuperCommand {
+    Authenticate { key: String },
+}
+impl FromStr for SuperCommand {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Ok(mut pair) = SuperCommandParser::parse(Rule::command, s) else {
+            return Err(());
+        };
+        let node = pair.next().unwrap().into_inner().next().unwrap();
+        match node.as_rule() {
+            Rule::command_auth => Ok(Self::Authenticate {
+                key: node.into_inner().next().unwrap().as_str().to_string(),
+            }),
+            _ => unreachable!(),
+        }
+    }
+}
+
+async fn process(
+    master_key: [u8; 32],
+    mut state: FrontState,
+    mut receiver: Receiver<Update>,
+) -> FrontState {
     let renderer = Renderer::new();
     info!("listening for messages");
     while let Some(update) = receiver.recv().await {
         let chat_id = update.message.chat.id;
-        match state.connections.get(&update.message.chat.id) {
-            None => match state.invitations.remove(update.message.text.trim()) {
-                Some(connection) => {
-                    telegram::send_text(&state.token, "joining".into(), chat_id)
+
+        if update.message.text.trim().starts_with('/') {
+            match update.message.text.parse() {
+                Err(_) => telegram::send_text(&state.token, "fail parsing".into(), chat_id)
+                    .await
+                    .logged(),
+                Ok(SuperCommand::Authenticate { key }) => {
+                    if derive_key(key.as_bytes()) == master_key {
+                        state.admins.insert(Terminal::Telegram(chat_id));
+                        telegram::send_text(&state.token, "you are now admin".into(), chat_id)
+                            .await
+                            .logged()
+                    } else {
+                        telegram::send_text(&state.token, "authentication failed".into(), chat_id)
+                            .await
+                            .logged()
+                    }
+                }
+            }
+        } else {
+            match state.connections.get(&Terminal::Telegram(chat_id)) {
+                None => match state.invitations.remove(update.message.text.trim()) {
+                    Some(connection) => {
+                        telegram::send_text(
+                            &state.token,
+                            format!(
+                                "you joined {}",
+                                state.instances[connection.instance as usize].name
+                            ),
+                            chat_id,
+                        )
                         .await
                         .logged();
-                    state.connections.insert(update.message.chat.id, connection);
-                }
-                None => {
-                    telegram::send_text(&state.token, "unknown invitation".into(), chat_id)
-                        .await
-                        .logged();
-                }
-            },
-            Some(&Connection {
-                instance,
-                person,
-                admin: _,
-            }) => {
-                let responses = state.instances[instance as usize].message(AppMessage {
-                    instant: update.message.date,
-                    content: update.message.text,
+                        state
+                            .connections
+                            .insert(Terminal::Telegram(chat_id), connection);
+                    }
+                    None => {
+                        telegram::send_text(&state.token, "unknown invitation".into(), chat_id)
+                            .await
+                            .logged();
+                    }
+                },
+                Some(&Connection {
+                    instance,
                     person,
-                });
-                for response in responses {
-                    match response {
-                        AppResponse::Success => {
-                            telegram::send_text(&state.token, "ok".into(), chat_id)
-                                .await
-                                .logged();
-                        }
-                        AppResponse::Text(text) => {
-                            telegram::send_text(&state.token, text, chat_id)
-                                .await
-                                .logged();
-                        }
-                        AppResponse::Failure => {
-                            telegram::send_text(&state.token, "fail".into(), chat_id)
-                                .await
-                                .logged();
-                        }
-                        AppResponse::Document {
-                            main,
-                            bytes,
-                            sources,
-                        } => {
-                            let image = renderer.render(main, sources, bytes);
-                            telegram::send_photo(&state.token, image, update.message.chat.id)
-                                .await
-                                .logged();
+                    admin: _,
+                }) => {
+                    let responses = state.instances[instance as usize].message(AppMessage {
+                        instant: update.message.date,
+                        content: update.message.text,
+                        person,
+                    });
+                    for response in responses {
+                        match response {
+                            AppResponse::Success => {
+                                telegram::send_text(&state.token, "ok".into(), chat_id)
+                                    .await
+                                    .logged();
+                            }
+                            AppResponse::Text(text) => {
+                                telegram::send_text(&state.token, text, chat_id)
+                                    .await
+                                    .logged();
+                            }
+                            AppResponse::Failure => {
+                                telegram::send_text(&state.token, "fail".into(), chat_id)
+                                    .await
+                                    .logged();
+                            }
+                            AppResponse::Document {
+                                main,
+                                bytes,
+                                sources,
+                            } => {
+                                let image = renderer.render(main, sources, bytes);
+                                telegram::send_photo(&state.token, image, update.message.chat.id)
+                                    .await
+                                    .logged();
+                            }
                         }
                     }
                 }
@@ -286,7 +356,7 @@ impl Logged for Result<reqwest::Response, reqwest::Error> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct Connection {
     instance: u32,
     person: u32,
@@ -295,8 +365,14 @@ struct Connection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FrontState {
-    connections: HashMap<i64, Connection>,
+    admins: HashSet<Terminal>,
+    connections: HashMap<Terminal, Connection>,
     instances: Slab<AppFichar>,
     invitations: HashMap<String, Connection>,
     token: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+enum Terminal {
+    Telegram(i64),
 }

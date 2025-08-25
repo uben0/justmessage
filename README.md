@@ -1,5 +1,7 @@
 # ROADMAP
 
+- [ ] instance based on group
+- [ ] use normalized str for time zone
 - [ ] admin console
 - [ ] clippy
 - [ ] rename bot

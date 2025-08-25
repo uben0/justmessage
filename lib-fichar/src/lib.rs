@@ -128,6 +128,9 @@ pub enum Command {
     Help,
     Nope,
     Persons,
+    Invite {
+        person: u32,
+    },
     Span {
         enter: i64,
         leave: i64,
@@ -192,6 +195,7 @@ struct OutputMonth {
 impl State {
     fn command(&mut self, command: Command, person: u32, instant: i64) -> Result<Output, Error> {
         match command {
+            Command::Invite { person } => todo!(),
             Command::Enter { enter } => Ok(Output::Enter {
                 previous: self
                     .enters(person, enter)?

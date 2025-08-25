@@ -1,0 +1,7 @@
+WHITESPACE = _{ " " }
+block = ${ (!WHITESPACE ~ ANY)+ }
+
+command = { SOI ~ "/" ~ (
+    command_auth
+) ~ EOI }
+command_auth = { "auth" ~ block }

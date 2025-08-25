@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["lib-fichar", "ascase", "codepoint", "just-message", "render", "telegram", "time-util", "json", "webhook", "frontend"]
+members = ["lib-fichar", "ascase", "codepoint", "just-message", "render", "telegram", "time-util", "json", "webhook", "frontend", "fichar"]

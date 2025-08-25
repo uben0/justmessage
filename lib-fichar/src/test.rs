@@ -47,7 +47,12 @@ macro_rules! doc {
 
 #[test]
 fn test_01() {
-    let mut app = State::default();
+    let mut app = State::new(
+        "Test".into(),
+        Tz::Europe__Amsterdam,
+        just_message::Language::En,
+        ["Foo".to_string()].into(),
+    );
     app.time_zone = Tz::Europe__Madrid;
 
     let mut time = app
