@@ -10,7 +10,6 @@ pub struct ToKebabCase<I> {
     input: I,
 }
 
-// TODO: rename to kebab case
 #[derive(Debug, Clone)]
 pub struct FromKebabCase {
     first: bool,

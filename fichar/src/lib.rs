@@ -1,6 +1,13 @@
 use rand::{TryRngCore, rngs::OsRng};
 use sha2::Sha256;
 
+pub mod command;
+pub mod context;
+pub mod input;
+pub mod language;
+pub mod output;
+pub mod state;
+
 pub fn derive_key(key: &[u8]) -> [u8; 32] {
     pbkdf2::pbkdf2_hmac_array::<Sha256, 32>(key, &[], 100_000)
 }

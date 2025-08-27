@@ -2,3 +2,5 @@ target/
 state
 .env
 Cargo.lock
+cert.pem
+key.pem
