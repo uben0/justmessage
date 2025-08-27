@@ -72,6 +72,7 @@ common_node!(
         set,
         help,
         person,
+        language,
         persons,
         word,
         hour_minute,
@@ -96,6 +97,7 @@ common_node!(
         command_set_time_zone,
         command_set_language,
         command_span,
+        command_span_day,
         command_enter,
         command_enter_hour_minute,
         command_leave,
@@ -143,6 +145,14 @@ where
                 Node::command_help => Command::Help,
                 Node::command_span => {
                     let [enter, leave] = command.children();
+                    let [hour, minute] = enter.children();
+                    let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    let [hour, minute] = leave.children();
+                    let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    Command::SpanHint { enter, leave }
+                }
+                Node::command_span_day => {
+                    let [day, enter, leave] = command.children();
                     let [hour, minute] = enter.children();
                     let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
                     let [hour, minute] = leave.children();
@@ -230,18 +240,18 @@ where
         _ => unreachable!(),
     }
 }
-fn parse_bool<R>(node: Pair<R>) -> bool
-where
-    R: RuleType + Into<Node>,
-{
-    assert_eq!(node.as_rule().into(), Node::bool);
-    let node = node.into_inner().next().unwrap();
-    match node.as_rule().into() {
-        Node::bool_true => true,
-        Node::bool_false => false,
-        _ => panic!(),
-    }
-}
+// fn parse_bool<R>(node: Pair<R>) -> bool
+// where
+//     R: RuleType + Into<Node>,
+// {
+//     assert_eq!(node.as_rule().into(), Node::bool);
+//     let node = node.into_inner().next().unwrap();
+//     match node.as_rule().into() {
+//         Node::bool_true => true,
+//         Node::bool_false => false,
+//         _ => panic!(),
+//     }
+// }
 fn parse_u32<R>(node: Pair<R>) -> u32
 where
     R: RuleType + Into<Node>,

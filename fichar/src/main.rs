@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::{
     Json, Router,
     body::Body,
@@ -9,16 +7,22 @@ use axum::{
     routing::post,
 };
 use axum_server::tls_rustls::RustlsConfig;
-use chrono::TimeZone;
+use chrono::{Datelike, TimeZone};
 use clap::Parser;
 use fichar::{
-    context::Context, gen_key, input::Input, key_to_hex, language::Language, output::Output,
+    context::Context,
+    gen_key,
+    input::Input,
+    key_to_hex,
+    language::Language,
+    output::{Output, OutputDaySpan, OutputMonth},
     state::AppState,
 };
-use indoc::indoc;
-use rcgen::{CertifiedKey, KeyPair};
+use indoc::{formatdoc, indoc};
 use render::Renderer;
+use std::collections::HashMap;
 use telegram::Update;
+use time_util::{DateTimeExt, TimeZoneExt};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info};
@@ -40,23 +44,23 @@ async fn main() {
     dotenvy::dotenv().ok();
     let token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
     let Args { reuse_cert } = Args::parse();
-    let (pem_cert, pem_key) = if reuse_cert {
+    let (pem_cert, pem_key, secret_token) = if reuse_cert {
         (
             std::fs::read_to_string("cert.pem").unwrap(),
             std::fs::read_to_string("key.pem").unwrap(),
+            std::fs::read_to_string("secret-token").unwrap(),
         )
     } else {
         let certificate =
             rcgen::generate_simple_self_signed(["fr1.justmessage.uben.ovh".to_string()]).unwrap();
         let pem_cert = certificate.cert.pem();
         let pem_key = certificate.signing_key.serialize_pem();
+        let secret_token = key_to_hex(gen_key());
         std::fs::write("cert.pem", &pem_cert).unwrap();
         std::fs::write("key.pem", &pem_key).unwrap();
-        (pem_cert, pem_key)
+        std::fs::write("secret-token", &secret_token).unwrap();
+        (pem_cert, pem_key, secret_token)
     };
-
-    let secret_token = gen_key();
-    let secret_token = key_to_hex(secret_token);
 
     tracing_subscriber::fmt()
         .with_target(false)
@@ -219,33 +223,27 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     .unwrap();
             }
             Output::SpanHasEarlierLeaveThanEnter(span) => {
-                let enter = context
-                    .time_zone
-                    .timestamp_opt(span.enter, 0)
-                    .earliest()
-                    .unwrap();
-                let leave = context
-                    .time_zone
-                    .timestamp_opt(span.leave, 0)
-                    .earliest()
-                    .unwrap();
+                let enter = context.time_zone.instant(span.enter);
+                let leave = context.time_zone.instant(span.leave);
+                let enter_ymd = enter.format_ymd("/");
+                let leave_ymd = leave.format_ymd("/");
+                let enter_hm = enter.format_hm("h");
+                let leave_hm = leave.format_hm("h");
 
                 let text = match context.language {
-                    Language::En => format!(
-                        indoc! {"
+                    Language::En => formatdoc!(
+                        "
                             The time span has leave instant earlier than enter instant:
-                                - enter {}
-                                - leave {}
-                        "},
-                        enter, leave
+                                - enter {enter_ymd} {enter_hm}
+                                - leave {leave_ymd} {leave_hm}
+                        ",
                     ),
-                    Language::Es => format!(
-                        indoc! {"
+                    Language::Es => formatdoc!(
+                        "
                             El tramo de tiempo tiene instante de salida antes del instante de entrada:
-                                - entra {}
-                                - sale {}
-                        "},
-                        enter, leave
+                                - entra {enter_ymd} {enter_hm}
+                                - sale {leave_ymd} {leave_hm}
+                        ",
                     ),
                 };
                 telegram::send_text(&token, text, context.chat)
@@ -265,17 +263,12 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => ("de", "a"),
                 };
                 for span in spans {
-                    let enter = context
-                        .time_zone
-                        .timestamp_opt(span.enter, 0)
-                        .earliest()
-                        .unwrap();
-                    let leave = context
-                        .time_zone
-                        .timestamp_opt(span.leave, 0)
-                        .earliest()
-                        .unwrap();
-                    writeln!(text, "  - {from} {enter} {to} {leave}").unwrap();
+                    let enter = context.time_zone.instant(span.enter);
+                    let leave = context.time_zone.instant(span.leave);
+                    let date = enter.format_ymd("/");
+                    let enter = enter.format_hm("h");
+                    let leave = leave.format_hm("h");
+                    writeln!(text, "  - {date} {from} {enter} {to} {leave}").unwrap();
                 }
                 telegram::send_text(&token, text, context.chat)
                     .await
@@ -331,7 +324,32 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     .await
                     .unwrap();
             }
-            Output::Month(month) => {
+            Output::Month {
+                person,
+                month,
+                spans,
+            } => {
+                let month = context.time_zone.instant(month);
+
+                let mut month = OutputMonth {
+                    name: "Unknown".to_string(),
+                    year: month.year(),
+                    month: month.month(),
+                    spans: Vec::new(),
+                    minutes: 0,
+                };
+                for span in spans {
+                    let enter = context.time_zone.instant(span.enter);
+                    let leave = context.time_zone.instant(span.leave);
+                    month.spans.push(OutputDaySpan {
+                        date: enter.into(),
+                        enter: enter.into(),
+                        leave: leave.into(),
+                        minutes: span.minutes(),
+                    });
+                    month.minutes += span.minutes();
+                }
+
                 let image = renderer.render(
                     include_str!("month.typ"),
                     HashMap::new(),

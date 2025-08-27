@@ -35,6 +35,7 @@ command = {
         command_set_time_zone     |
         command_set_language      |
         command_span              |
+        command_span_day          |
         command_enter_hour_minute |
         command_enter             |
         command_leave_hour_minute |
@@ -50,8 +51,9 @@ command_persons           = { persons }
 command_person_admin      = { person ~ target ~ admin ~ bool }
 command_new_person        = { person ~ new ~ name+ }
 command_set_time_zone     = { set ~ TIME_ZONE ~ time_zone }
-command_set_language      = { set ~ ^"language" ~ word }
+command_set_language      = { set ~ language ~ word }
 command_span              = { hour_minute ~ hour_minute }
+command_span_day          = { number ~ hour_minute ~ hour_minute }
 command_enter             = { enter }
 command_enter_hour_minute = { enter ~ hour_minute }
 command_leave             = { leave }

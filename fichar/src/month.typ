@@ -6,10 +6,10 @@
 #let fmt-date((year, month, day)) = {
   strfmt("{:0>4}-{:0>2}-{:0>2}", year, month, day)
 }
-#let fmt-time((hour, minute, second)) = {
+#let fmt-time((hour, minute)) = {
   strfmt("{:0>2}:{:0>2}", hour, minute)
 }
-#let fmt-duration((hours, minutes, seconds)) = {
+#let fmt-duration((hours, minutes)) = {
   strfmt("{}h{:0>2}m", hours, minutes)
 }
 #let fmt-month(month) = {
@@ -31,12 +31,10 @@
 }
 
 
-#let seconds-hms(seconds) = {
-  let minutes = calc.div-euclid(seconds, 60)
-  let seconds = calc.rem-euclid(seconds, 60)
+#let hours-from-minutes(minutes) = {
   let hours = calc.div-euclid(minutes, 60)
   let minutes = calc.rem-euclid(minutes, 60)
-  (hours: hours, minutes: minutes, seconds: seconds)
+  (hours: hours, minutes: minutes)
 }
 
 = #infos.year #fmt-month(infos.month)
@@ -48,14 +46,13 @@
   .. infos.spans.map(
     span => (
       fmt-date(span.date),
-      fmt-time(span.enters),
-      fmt-time(span.leaves),
-      fmt-duration(seconds-hms(span.seconds))
+      fmt-time(span.enter),
+      fmt-time(span.leave),
+      fmt-duration(hours-from-minutes(span.minutes))
     ),
   ).flatten()
 )
 
-#let total = infos.spans.map(span => span.seconds).sum(default: 0)
-#let total = seconds-hms(total)
+#let total = hours-from-minutes(infos.minutes)
 
 Total: #fmt-duration(total)

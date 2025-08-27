@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 render = { path = "../render" }
+time-util = { path = "../time-util" }
+telegram = { path = "../telegram" }
 axum = "0.8.4"
 axum-server = { version = "0.7.2", features = ["tls-rustls-no-provider"] }
 clap = { version = "4.5.45", features = ["derive"] }
@@ -14,12 +16,10 @@ rand = "0.9.2"
 rcgen = "0.14.3"
 serde = { version = "1.0.219", features = ["derive"] }
 sha2 = "0.10.9"
-telegram = { path = "../telegram" }
 tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
 tower-http = { version = "0.6.6", features = ["trace"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["tracing"] }
-time-util = { path = "../time-util" }
 chrono = "0.4.41"
 chrono-tz = "0.10.4"
 pest = "2.8.1"

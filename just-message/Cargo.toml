@@ -1,8 +1,0 @@
-[package]
-name = "just-message"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-serde = "1.0.219"
-time-util = { path = "../time-util" }

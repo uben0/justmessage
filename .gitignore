@@ -4,3 +4,4 @@ state
 Cargo.lock
 cert.pem
 key.pem
+secret-token

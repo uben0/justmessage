@@ -35,6 +35,8 @@ pub struct User {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Chat {
     pub id: i64,
+    #[serde(rename = "type")]
+    pub kind: ChatType,
     #[serde(default)]
     pub title: Option<String>,
 }
@@ -63,6 +65,18 @@ pub enum ChatMember {
     Left { user: User },
     #[serde(rename = "kicked")]
     Banned { user: User },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ChatType {
+    #[serde(rename = "private")]
+    Private,
+    #[serde(rename = "group")]
+    Group,
+    #[serde(rename = "supergroup")]
+    SuperGroup,
+    #[serde(rename = "channel")]
+    Channel,
 }
 
 pub async fn send_photo(token: &str, photo: Vec<u8>, chat_id: i64) -> Result<Response, Error> {

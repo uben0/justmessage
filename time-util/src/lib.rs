@@ -17,31 +17,13 @@ pub struct Time {
     pub second: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct DaySpan {
-    pub date: Date,
-    pub enters: Time,
-    pub leaves: Time,
-    pub seconds: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LocalDateTime {
-    pub year: i32,
-    pub month: u32,
-    pub day: u32,
-    pub week_day: u32,
-    pub hour: u32,
-    pub minute: u32,
-    pub second: u32,
-    pub offset: i32,
-}
 #[derive(Debug, Clone, Copy)]
 pub enum TimeHintMinute {
     None,
     Hour(u32),
     HourMinute(u32, u32),
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum TimeHintDay {
     None,
@@ -50,6 +32,7 @@ pub enum TimeHintDay {
     MonthDay(u32, u32),
     YearMonth(i32, u32, u32),
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum TimeHintMonth {
     None,
@@ -58,12 +41,21 @@ pub enum TimeHintMonth {
 }
 
 pub trait TimeZoneExt: TimeZone + Clone {
-    fn days(&self, range: Range<i64>) -> SpansDaySplit<Self> {
-        SpansDaySplit(range, self.clone())
+    fn instant(&self, instant: i64) -> DateTime<Self> {
+        self.timestamp_opt(instant, 0).single().unwrap()
+    }
+    fn split_span_on_day(&self, span: Range<i64>) -> SpanSplitOnDay<Self> {
+        SpanSplitOnDay {
+            span,
+            time_zone: self.clone(),
+        }
     }
 }
 
-pub trait DateTimeExt: Sized {
+pub trait DateTimeExt<T: TimeZone>: Sized {
+    fn format_ymd(self, sep: &'static str) -> Formatter<T>;
+    fn format_hm(self, sep: &'static str) -> Formatter<T>;
+
     fn align_year(self) -> Option<Self>;
     fn range_year(self) -> Option<Range<i64>>;
     fn align_month(self) -> Option<Self>;
@@ -75,10 +67,30 @@ pub trait DateTimeExt: Sized {
     fn align_minute(self) -> Option<Self>;
     fn range_minute(self) -> Option<Range<i64>>;
 }
-impl<T> DateTimeExt for DateTime<T>
-where
-    T: TimeZone,
-{
+
+pub struct Formatter<T: TimeZone> {
+    format: Format,
+    instant: DateTime<T>,
+}
+pub enum Format {
+    YearMonthDay { sep: &'static str },
+    HourMinute { sep: &'static str },
+}
+
+impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
+    fn format_ymd(self, sep: &'static str) -> Formatter<T> {
+        Formatter {
+            format: Format::YearMonthDay { sep },
+            instant: self,
+        }
+    }
+    fn format_hm(self, sep: &'static str) -> Formatter<T> {
+        Formatter {
+            format: Format::HourMinute { sep },
+            instant: self,
+        }
+    }
+
     fn align_year(self) -> Option<Self> {
         self.with_nanosecond(0)?
             .with_second(0)?
@@ -158,42 +170,35 @@ impl<T: TimeZone> TimeZoneExt for T {}
 /// Time spans contained in the timestamp range
 ///
 /// If the start and end timestamps belongs to the same day, a single span will be returned. Everytime a midnight is included in the range, a span will stop and a new will start.
-pub struct SpansDaySplit<T: TimeZone>(pub Range<i64>, pub T);
-impl<T: TimeZone> Iterator for SpansDaySplit<T> {
-    type Item = DaySpan;
+pub struct SpanSplitOnDay<T: TimeZone> {
+    pub span: Range<i64>,
+    pub time_zone: T,
+}
+impl<T: TimeZone> Iterator for SpanSplitOnDay<T> {
+    type Item = Range<i64>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.0.start == self.0.end {
+        if self.span.start >= self.span.end {
             return None;
         }
-        assert!(self.0.start < self.0.end);
         let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
-        let start = self.1.timestamp_opt(self.0.start, 0).unwrap();
-        let end = self.1.timestamp_opt(self.0.end, 0).unwrap();
+        let start = self.time_zone.instant(self.span.start);
         let prev_midnight = start.with_time(midnight).unwrap();
         let next_midnight = (prev_midnight + Days::new(1)).timestamp();
 
-        if self.0.end <= next_midnight {
-            let span = DaySpan {
-                date: start.date_naive().into(),
-                enters: start.time().into(),
-                leaves: end.time().into(),
-                seconds: (self.0.end - self.0.start) as u32,
-            };
-            self.0.start = self.0.end;
+        if self.span.end <= next_midnight {
+            let span = self.span.start..self.span.end;
+            self.span.start = self.span.end;
             Some(span)
         } else {
-            let span = DaySpan {
-                date: start.date_naive().into(),
-                enters: start.time().into(),
-                leaves: midnight.into(),
-                seconds: (next_midnight - self.0.start) as u32,
-            };
-            self.0.start = next_midnight;
+            let span = self.span.start..next_midnight;
+            self.span.start = next_midnight;
             Some(span)
         }
     }
 }
+
+// TODO: remove Date and Time
 impl From<NaiveDate> for Date {
     fn from(date: NaiveDate) -> Self {
         Self {
@@ -230,14 +235,9 @@ impl TimeHintMinute {
 impl TimeHintMonth {
     pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
         Some(match self {
-            Self::None => time_zone
-                .timestamp_opt(instant, 0)
-                .single()?
-                .align_month()?
-                .range_month()?,
+            Self::None => time_zone.instant(instant).align_month()?.range_month()?,
             Self::Month(month) => time_zone
-                .timestamp_opt(instant, 0)
-                .single()?
+                .instant(instant)
                 .align_year()?
                 .with_month(month)?
                 .range_month()?,
@@ -248,21 +248,19 @@ impl TimeHintMonth {
         })
     }
 }
-
-impl LocalDateTime {
-    pub fn date(&self) -> Date {
-        Date {
-            year: self.year,
-            month: self.month,
-            day: self.day,
-        }
-    }
-    pub fn time(&self) -> Time {
-        Time {
-            hour: self.hour,
-            minute: self.minute,
-            second: self.second,
-        }
+impl TimeHintDay {
+    pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
+        Some(match self {
+            TimeHintDay::None => time_zone.instant(instant).align_day()?.range_day()?,
+            TimeHintDay::Weekday(_) => todo!(),
+            TimeHintDay::Day(day) => time_zone
+                .instant(instant)
+                .align_month()?
+                .with_day(day)?
+                .range_day()?,
+            TimeHintDay::MonthDay(_, _) => todo!(),
+            TimeHintDay::YearMonth(_, _, _) => todo!(),
+        })
     }
 }
 
@@ -296,6 +294,28 @@ impl Display for DateDisplayYearMonthDay {
 impl Date {
     pub fn display_ymd(self, sep: &'static str) -> DateDisplayYearMonthDay {
         DateDisplayYearMonthDay { date: self, sep }
+    }
+}
+
+impl<T: TimeZone> Display for Formatter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.format {
+            Format::YearMonthDay { sep } => write!(
+                f,
+                "{}{sep}{:0>2}{sep}{:0>2}",
+                self.instant.year(),
+                self.instant.month(),
+                self.instant.day()
+            ),
+            Format::HourMinute { sep } => {
+                write!(
+                    f,
+                    "{}{sep}{:0>2}",
+                    self.instant.hour(),
+                    self.instant.minute(),
+                )
+            }
+        }
     }
 }
 
