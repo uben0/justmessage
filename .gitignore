@@ -1,7 +1,7 @@
-target/
-state
-.env
-Cargo.lock
-cert.pem
-key.pem
-secret-token
+/target
+/state
+/.env
+/Cargo.lock
+/cert.pem
+/key.pem
+/secret-token
