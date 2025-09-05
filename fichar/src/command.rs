@@ -1,7 +1,7 @@
 use crate::language::Language;
 use chrono_tz::Tz;
 use std::ops::Range;
-use time_util::{TimeHintMinute, TimeHintMonth};
+use time_util::{TimeHintDay, TimeHintMinute, TimeHintMonth};
 
 mod parser;
 
@@ -10,13 +10,21 @@ pub use parser::parse;
 pub enum Command {
     Help,
     Nope,
+    Clear {
+        day: Range<i64>,
+    },
+    ClearHint {
+        day: TimeHintDay,
+    },
     Span {
         enter: i64,
         leave: i64,
     },
     SpanHint {
-        enter: TimeHintMinute,
-        leave: TimeHintMinute,
+        enter_day: Option<TimeHintDay>,
+        enter_minute: TimeHintMinute,
+        leave_day: Option<TimeHintDay>,
+        leave_minute: TimeHintMinute,
     },
     Enter {
         enter: i64,

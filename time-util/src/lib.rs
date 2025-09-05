@@ -1,5 +1,6 @@
 use chrono::{
-    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike,
+    DateTime, Datelike, Days, Duration, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone,
+    Timelike, Weekday,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Range};
@@ -27,10 +28,10 @@ pub enum TimeHintMinute {
 #[derive(Debug, Clone, Copy)]
 pub enum TimeHintDay {
     None,
-    Weekday(u32),
+    Weekday(Weekday),
     Day(u32),
     MonthDay(u32, u32),
-    YearMonth(i32, u32, u32),
+    YearMonthDay(i32, u32, u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,12 +102,12 @@ impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
     }
 
     fn range_year(self) -> Option<Range<i64>> {
-        assert_eq!(self.month(), 1);
-        assert_eq!(self.day(), 1);
-        assert_eq!(self.hour(), 0);
-        assert_eq!(self.minute(), 0);
-        assert_eq!(self.second(), 0);
-        assert_eq!(self.nanosecond(), 0);
+        debug_assert_eq!(self.month(), 1);
+        debug_assert_eq!(self.day(), 1);
+        debug_assert_eq!(self.hour(), 0);
+        debug_assert_eq!(self.minute(), 0);
+        debug_assert_eq!(self.second(), 0);
+        debug_assert_eq!(self.nanosecond(), 0);
         let end = self.clone().checked_add_months(Months::new(12))?;
         Some(self.timestamp()..end.timestamp())
     }
@@ -119,11 +120,11 @@ impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
     }
 
     fn range_month(self) -> Option<Range<i64>> {
-        assert_eq!(self.day(), 1);
-        assert_eq!(self.hour(), 0);
-        assert_eq!(self.minute(), 0);
-        assert_eq!(self.second(), 0);
-        assert_eq!(self.nanosecond(), 0);
+        debug_assert_eq!(self.day(), 1);
+        debug_assert_eq!(self.hour(), 0);
+        debug_assert_eq!(self.minute(), 0);
+        debug_assert_eq!(self.second(), 0);
+        debug_assert_eq!(self.nanosecond(), 0);
         let end = self.clone().checked_add_months(Months::new(1))?;
         Some(self.timestamp()..end.timestamp())
     }
@@ -135,10 +136,10 @@ impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
     }
 
     fn range_day(self) -> Option<Range<i64>> {
-        assert_eq!(self.hour(), 0);
-        assert_eq!(self.minute(), 0);
-        assert_eq!(self.second(), 0);
-        assert_eq!(self.nanosecond(), 0);
+        debug_assert_eq!(self.hour(), 0);
+        debug_assert_eq!(self.minute(), 0);
+        debug_assert_eq!(self.second(), 0);
+        debug_assert_eq!(self.nanosecond(), 0);
         let end = self.clone().checked_add_days(Days::new(1))?;
         Some(self.timestamp()..end.timestamp())
     }
@@ -147,9 +148,9 @@ impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
     }
 
     fn range_hour(self) -> Option<Range<i64>> {
-        assert_eq!(self.minute(), 0);
-        assert_eq!(self.second(), 0);
-        assert_eq!(self.nanosecond(), 0);
+        debug_assert_eq!(self.minute(), 0);
+        debug_assert_eq!(self.second(), 0);
+        debug_assert_eq!(self.nanosecond(), 0);
         let end = self.clone().checked_add_signed(TimeDelta::hours(1))?;
         Some(self.timestamp()..end.timestamp())
     }
@@ -158,8 +159,8 @@ impl<T: TimeZone> DateTimeExt<T> for DateTime<T> {
     }
 
     fn range_minute(self) -> Option<Range<i64>> {
-        assert_eq!(self.second(), 0);
-        assert_eq!(self.nanosecond(), 0);
+        debug_assert_eq!(self.second(), 0);
+        debug_assert_eq!(self.nanosecond(), 0);
         let end = self.clone().checked_add_signed(TimeDelta::minutes(1))?;
         Some(self.timestamp()..end.timestamp())
     }
@@ -181,9 +182,9 @@ impl<T: TimeZone> Iterator for SpanSplitOnDay<T> {
         if self.span.start >= self.span.end {
             return None;
         }
-        let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+        let midnight = NaiveTime::from_hms_opt(0, 0, 0)?;
         let start = self.time_zone.instant(self.span.start);
-        let prev_midnight = start.with_time(midnight).unwrap();
+        let prev_midnight = start.with_time(midnight).earliest()?;
         let next_midnight = (prev_midnight + Days::new(1)).timestamp();
 
         if self.span.end <= next_midnight {
@@ -231,6 +232,34 @@ impl TimeHintMinute {
                 .range_minute()?,
         })
     }
+    pub fn infer_first_after(
+        self,
+        time_zone: impl TimeZone + Clone,
+        instant: i64,
+    ) -> Option<Range<i64>> {
+        let instant = time_zone.timestamp_opt(instant, 0).single()?;
+        match self {
+            TimeHintMinute::None => None,
+            TimeHintMinute::Hour(hour) => {
+                let mut aligned = instant.clone().align_day()?.with_hour(hour)?;
+                while aligned <= instant {
+                    aligned = aligned + Days::new(1);
+                }
+                aligned.range_minute()
+            }
+            TimeHintMinute::HourMinute(hour, minute) => {
+                let mut aligned = instant
+                    .clone()
+                    .align_day()?
+                    .with_hour(hour)?
+                    .with_minute(minute)?;
+                while aligned <= instant {
+                    aligned = aligned + Days::new(1);
+                }
+                aligned.range_minute()
+            }
+        }
+    }
 }
 impl TimeHintMonth {
     pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
@@ -249,18 +278,75 @@ impl TimeHintMonth {
     }
 }
 impl TimeHintDay {
-    pub fn infer(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
+    pub fn infer_past(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
         Some(match self {
             TimeHintDay::None => time_zone.instant(instant).align_day()?.range_day()?,
-            TimeHintDay::Weekday(_) => todo!(),
+            TimeHintDay::Weekday(hint) => {
+                let mut aligned_day = time_zone.instant(instant).align_day()?;
+                while aligned_day.weekday() != hint {
+                    aligned_day = aligned_day - Days::new(1);
+                }
+                aligned_day.range_day()?
+            }
             TimeHintDay::Day(day) => time_zone
                 .instant(instant)
                 .align_month()?
                 .with_day(day)?
                 .range_day()?,
-            TimeHintDay::MonthDay(_, _) => todo!(),
-            TimeHintDay::YearMonth(_, _, _) => todo!(),
+            TimeHintDay::MonthDay(month, day) => time_zone
+                .instant(instant)
+                .align_year()?
+                .with_month(month)?
+                .with_day(day)?
+                .range_day()?,
+            TimeHintDay::YearMonthDay(year, month, day) => time_zone
+                .with_ymd_and_hms(year, month, day, 0, 0, 0)
+                .earliest()?
+                .range_day()?,
         })
+    }
+    pub fn infer_first_after(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
+        match self {
+            TimeHintDay::None => None,
+            TimeHintDay::Weekday(weekday) => {
+                let mut aligned_day = time_zone.instant(instant).align_day()?;
+                while aligned_day.weekday() != weekday {
+                    aligned_day = aligned_day + Days::new(1);
+                }
+                aligned_day.range_day()
+            }
+            TimeHintDay::Day(day) => {
+                let instant = time_zone.instant(instant);
+                let mut aligned = instant.clone().align_month()?.with_day(day)?;
+                while aligned <= instant {
+                    aligned = aligned + Months::new(1);
+                }
+                aligned.range_day()
+            }
+            TimeHintDay::MonthDay(month, day) => {
+                let instant = time_zone.instant(instant);
+                let mut aligned = instant
+                    .clone()
+                    .align_year()?
+                    .with_month(month)?
+                    .with_day(day)?;
+                while aligned <= instant {
+                    aligned = aligned + Months::new(12);
+                }
+                aligned.range_day()
+            }
+            TimeHintDay::YearMonthDay(year, month, day) => {
+                let aligned = time_zone
+                    .with_ymd_and_hms(year, month, day, 0, 0, 0)
+                    .earliest()?
+                    .range_month()?;
+                if aligned.start <= instant {
+                    None
+                } else {
+                    Some(aligned)
+                }
+            }
+        }
     }
 }
 

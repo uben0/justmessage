@@ -1,19 +1,8 @@
 #import "@preview/oxifmt:1.0.0": strfmt
 #set page(width: auto, height: auto, margin: 1cm)
 
-#let infos = json("month.json")
-
-#let fmt-date((year, month, day)) = {
-  strfmt("{:0>4}-{:0>2}-{:0>2}", year, month, day)
-}
-#let fmt-time((hour, minute)) = {
-  strfmt("{:0>2}:{:0>2}", hour, minute)
-}
-#let fmt-duration((hours, minutes)) = {
-  strfmt("{}h{:0>2}m", hours, minutes)
-}
-#let fmt-month(month) = {
-  let months = (
+#let MONTHS = (
+  en: (
     [January],
     [February],
     [Mars],
@@ -26,8 +15,54 @@
     [October],
     [November],
     [December],
-  );
-  months.at(month - 1)
+  ),
+  es: (
+    [Enero],
+    [Febrero],
+    [Marso],
+    [Abril],
+    [Mayo],
+    [Junio],
+    [Julio],
+    [Agosto],
+    [Septiembre],
+    [Octubro],
+    [Noviembre],
+    [Diciembre],
+  )
+);
+#let WORDS = (
+  en: (
+    date: [date],
+    enter: [enter],
+    leave: [leave],
+    duration: [duration],
+    total: [Total],
+  ),
+  es: (
+    date: [fecha],
+    enter: [entra],
+    leave: [sale],
+    duration: [duración],
+    total: [Total],
+  ),
+)
+
+#let infos = json("month.json")
+#let MONTHS = MONTHS.at(infos.language)
+#let WORDS = WORDS.at(infos.language)
+
+#let fmt-date((year, month, day)) = {
+  strfmt("{:0>4}-{:0>2}-{:0>2}", year, month, day)
+}
+#let fmt-time((hour, minute)) = {
+  strfmt("{:0>2}:{:0>2}", hour, minute)
+}
+#let fmt-duration((hours, minutes)) = {
+  strfmt("{}h{:0>2}m", hours, minutes)
+}
+#let fmt-month(month) = {
+  MONTHS.at(month - 1)
 }
 
 
@@ -41,8 +76,8 @@
 
 == #infos.name
 
-#table(columns: 4,
-  table.header([date], [enter], [leave], [duration]),
+#table(columns: 4, align: (left, right, right, right),
+  table.header(WORDS.date, WORDS.enter, WORDS.leave, WORDS.duration),
   .. infos.spans.map(
     span => (
       fmt-date(span.date),
@@ -55,4 +90,4 @@
 
 #let total = hours-from-minutes(infos.minutes)
 
-Total: #fmt-duration(total)
+#WORDS.total: #fmt-duration(total)

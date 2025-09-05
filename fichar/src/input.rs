@@ -3,6 +3,7 @@ use telegram::{ChatMember, ChatType, Update};
 #[derive(Debug, Clone)]
 pub enum Input {
     Text {
+        user: (Option<String>, Option<String>),
         chat: i64,
         group: bool,
         person: i64,
@@ -29,6 +30,7 @@ impl TryFrom<Update> for Input {
         if let Some(message) = update.message {
             if let Some(text) = message.text {
                 Ok(Self::Text {
+                    user: (message.from.first_name, message.from.last_name),
                     chat: message.chat.id,
                     group: message.chat.kind == ChatType::Group,
                     person: message.from.id,

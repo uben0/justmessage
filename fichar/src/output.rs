@@ -1,6 +1,9 @@
-use crate::state::instance::Span;
+use std::fmt::Display;
+
+use crate::{context::Context, language::Language, state::instance::Span};
 use chrono::{DateTime, Datelike, TimeZone, Timelike};
 use serde::Serialize;
+use time_util::{DateTimeExt, TimeZoneExt};
 
 #[derive(Debug, Clone)]
 pub enum Output {
@@ -10,14 +13,19 @@ pub enum Output {
     YourAreNotPartOfAGroup,
     CouldNotRecognizeCommand,
     Help,
+    SpanAdded(Span),
+    Entered(i64),
     SpanHasEarlierLeaveThanEnter(Span),
     SpanOverrodeSpans(Vec<Span>),
+    ClearedSpans(Vec<Span>),
     EnterOverrodeEntered(i64),
     TryLeaveButNotEntered,
     CouldNotInferMinute,
+    CouldNotInferDay,
     CouldNotInferMonth,
     Month {
         person: i64,
+        name: String,
         month: i64,
         spans: Vec<Span>,
     },
@@ -26,6 +34,7 @@ pub enum Output {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OutputMonth {
+    pub language: Language,
     pub name: String,
     pub year: i32,
     pub month: u32,
@@ -68,6 +77,39 @@ impl<T: TimeZone> From<DateTime<T>> for OutputTime {
         Self {
             hour: time.hour(),
             minute: time.minute(),
+        }
+    }
+}
+
+pub struct SpanFormatter<'a> {
+    context: &'a Context,
+    span: Span,
+}
+impl<'a> Display for SpanFormatter<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (from, to) = match self.context.language {
+            Language::En => ("from", "to"),
+            Language::Es => ("de", "a"),
+        };
+        let enter = self.context.time_zone.instant(self.span.enter);
+        let leave = self.context.time_zone.instant(self.span.leave);
+        let date = enter.format_ymd("/");
+        let enter = enter.format_hm("h");
+        let leave = leave.format_hm("h");
+        let minutes = self.span.minutes();
+        let hours = minutes.div_euclid(60);
+        let minutes = minutes.rem_euclid(60);
+        writeln!(
+            f,
+            "{date} {from} {enter} {to} {leave} ({hours}h{minutes:0>2})"
+        )
+    }
+}
+impl Span {
+    pub fn format(self, context: &Context) -> SpanFormatter {
+        SpanFormatter {
+            context,
+            span: self,
         }
     }
 }

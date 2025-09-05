@@ -4,6 +4,7 @@ use time_util::TimeZoneExt;
 use crate::language::Language;
 use std::{collections::HashMap, ops::Range};
 
+#[derive(Debug, Clone)]
 pub struct Instance {
     pub language: Language,
     pub time_zone: Tz,
@@ -14,6 +15,8 @@ pub struct Instance {
 pub struct Person {
     spans: Vec<Span>,
     entered: Option<i64>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,6 +35,27 @@ impl Instance {
             time_zone,
             persons: HashMap::new(),
         }
+    }
+    pub fn get_name(&self, person: i64) -> Option<String> {
+        let person = self.person(person)?;
+        let mut names = Vec::new();
+        if let Some(ref first_name) = person.first_name {
+            names.push(first_name.as_str());
+        }
+        if let Some(ref last_name) = person.last_name {
+            names.push(last_name.as_str());
+        }
+        if names.is_empty() {
+            return None;
+        } else {
+            Some(names.join(" "))
+        }
+    }
+    pub fn set_first_name(&mut self, person: i64, first_name: String) {
+        self.persons.entry(person).or_default().first_name = Some(first_name);
+    }
+    pub fn set_last_name(&mut self, person: i64, last_name: String) {
+        self.persons.entry(person).or_default().last_name = Some(last_name);
     }
     pub fn with_person(&mut self, person: i64) -> &mut Self {
         self.persons.entry(person).or_default();
@@ -64,7 +88,7 @@ impl Instance {
         let person = self.persons.entry(person).or_insert(Person::default());
         person.entered.replace(enter)
     }
-    pub fn leave(&mut self, person: i64, leave: i64) -> Result<Vec<Span>, LeaveError> {
+    pub fn leave(&mut self, person: i64, leave: i64) -> Result<(Span, Vec<Span>), LeaveError> {
         let Some(person_obj) = self.persons.get_mut(&person) else {
             return Err(LeaveError::NotEntered);
         };
@@ -72,7 +96,7 @@ impl Instance {
             return Err(LeaveError::NotEntered);
         };
         match self.add_span(person, enter, leave) {
-            Ok(overriden) => Ok(overriden),
+            Ok(overriden) => Ok((Span { enter, leave }, overriden)),
             Err(AddSpanError::LeaveEarlierThanEnter(span)) => {
                 Err(LeaveError::LeaveEarlierThanEnter(span))
             }
@@ -92,6 +116,15 @@ impl Instance {
         slice
             .iter()
             .filter_map(move |span| span.conjunction(start..end))
+    }
+    pub fn clear(&mut self, person: i64, start: i64, end: i64) -> Vec<Span> {
+        if let Some(person) = self.persons.get_mut(&person) {
+            let min = person.spans.partition_point(|s| s.leave <= start);
+            let max = person.spans.partition_point(|s| s.enter < end);
+            person.spans.drain(min..max).collect()
+        } else {
+            Vec::new()
+        }
     }
     pub fn select(&self, person: i64, start: i64, end: i64) -> Vec<Span> {
         let mut spans = Vec::new();

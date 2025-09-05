@@ -1,9 +1,13 @@
+use chrono::Weekday;
 use chrono_tz::Tz;
 use pest::Parser;
 use pest::RuleType;
 use pest::iterators::Pair;
+use time_util::TimeHintDay;
 use time_util::TimeHintMinute;
 use time_util::TimeHintMonth;
+use tracing::error;
+use tracing::warn;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{command::Command, language::Language};
@@ -67,13 +71,40 @@ common_node!(
         EOI,
         WHITESPACE,
         TIME_ZONE,
-        new,
-        admin,
-        set,
-        help,
-        person,
-        language,
-        persons,
+        CLEAR,
+        NEW,
+        ADMIN,
+        SET,
+        HELP,
+        PERSON,
+        LANGUAGE,
+        PERSONS,
+        TARGET_ALL,
+        TARGET_ME,
+        TRUE,
+        FALSE,
+        ENTER,
+        LEAVE,
+        MONTH,
+        MONTH_01,
+        MONTH_02,
+        MONTH_03,
+        MONTH_04,
+        MONTH_05,
+        MONTH_06,
+        MONTH_07,
+        MONTH_08,
+        MONTH_09,
+        MONTH_10,
+        MONTH_11,
+        MONTH_12,
+        WEEKDAY_0,
+        WEEKDAY_1,
+        WEEKDAY_2,
+        WEEKDAY_3,
+        WEEKDAY_4,
+        WEEKDAY_5,
+        WEEKDAY_6,
         word,
         hour_minute,
         number,
@@ -86,9 +117,7 @@ common_node!(
         targets,
         target,
         target_index,
-        target_all,
-        target_me,
-        month_n,
+        month,
         command,
         command_help,
         command_persons,
@@ -96,8 +125,11 @@ common_node!(
         command_new_person,
         command_set_time_zone,
         command_set_language,
+        command_clear,
+        command_clear_date,
         command_span,
-        command_span_day,
+        command_span_date,
+        command_span_date_date,
         command_enter,
         command_enter_hour_minute,
         command_leave,
@@ -105,23 +137,12 @@ common_node!(
         command_month,
         command_month_month,
         command_month_year_month,
-        bool_true,
-        bool_false,
-        enter,
-        leave,
-        month,
-        month_01,
-        month_02,
-        month_03,
-        month_04,
-        month_05,
-        month_06,
-        month_07,
-        month_08,
-        month_09,
-        month_10,
-        month_11,
-        month_12,
+        weekday,
+        day,
+        date_sep,
+        year_month_day,
+        month_day,
+        date_hint,
     ]
 );
 
@@ -146,18 +167,53 @@ where
                 Node::command_span => {
                     let [enter, leave] = command.children();
                     let [hour, minute] = enter.children();
-                    let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    let enter_minute =
+                        TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
                     let [hour, minute] = leave.children();
-                    let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
-                    Command::SpanHint { enter, leave }
+                    let leave_minute =
+                        TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
+                    Command::SpanHint {
+                        enter_day: None,
+                        enter_minute,
+                        leave_day: None,
+                        leave_minute,
+                    }
                 }
-                Node::command_span_day => {
-                    let [day, enter, leave] = command.children();
-                    let [hour, minute] = enter.children();
-                    let enter = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
-                    let [hour, minute] = leave.children();
-                    let leave = TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute));
-                    Command::SpanHint { enter, leave }
+                Node::command_clear => Command::ClearHint {
+                    day: TimeHintDay::None,
+                },
+                Node::command_clear_date => {
+                    let date = command.child();
+                    let day = parse_date_hint(date);
+                    Command::ClearHint { day }
+                }
+                Node::command_span_date => {
+                    let [date, enter, leave] = command.children();
+                    let [hour, minute] = enter.children().map(parse_u32);
+                    let enter_minute = TimeHintMinute::HourMinute(hour, minute);
+                    let [hour, minute] = leave.children().map(parse_u32);
+                    let leave_minute = TimeHintMinute::HourMinute(hour, minute);
+
+                    Command::SpanHint {
+                        enter_day: Some(parse_date_hint(date)),
+                        enter_minute,
+                        leave_day: None,
+                        leave_minute,
+                    }
+                }
+                Node::command_span_date_date => {
+                    let [date1, enter, date2, leave] = command.children();
+                    let [hour, minute] = enter.children().map(parse_u32);
+                    let enter_minute = TimeHintMinute::HourMinute(hour, minute);
+                    let [hour, minute] = leave.children().map(parse_u32);
+                    let leave_minute = TimeHintMinute::HourMinute(hour, minute);
+
+                    Command::SpanHint {
+                        enter_day: Some(parse_date_hint(date1)),
+                        enter_minute,
+                        leave_day: Some(parse_date_hint(date2)),
+                        leave_minute,
+                    }
                 }
                 Node::command_enter => Command::EnterHint {
                     time_hint: TimeHintMinute::None,
@@ -211,9 +267,9 @@ where
                         language: parse_language(language)?,
                     }
                 }
-                _ => {
-                    dbg!(command);
-                    todo!()
+                node => {
+                    error!("unexpected node during parsing: {node:?}");
+                    return Err(());
                 }
             })
         }
@@ -225,18 +281,55 @@ where
     R: RuleType + Into<Node>,
 {
     match node.as_rule().into() {
-        Node::month_01 => 1,
-        Node::month_02 => 2,
-        Node::month_03 => 3,
-        Node::month_04 => 4,
-        Node::month_05 => 5,
-        Node::month_06 => 6,
-        Node::month_07 => 7,
-        Node::month_08 => 8,
-        Node::month_09 => 9,
-        Node::month_10 => 10,
-        Node::month_11 => 11,
-        Node::month_12 => 12,
+        Node::MONTH_01 => 1,
+        Node::MONTH_02 => 2,
+        Node::MONTH_03 => 3,
+        Node::MONTH_04 => 4,
+        Node::MONTH_05 => 5,
+        Node::MONTH_06 => 6,
+        Node::MONTH_07 => 7,
+        Node::MONTH_08 => 8,
+        Node::MONTH_09 => 9,
+        Node::MONTH_10 => 10,
+        Node::MONTH_11 => 11,
+        Node::MONTH_12 => 12,
+        _ => unreachable!(),
+    }
+}
+fn parse_date_hint<R>(node: Pair<R>) -> TimeHintDay
+where
+    R: RuleType + Into<Node>,
+{
+    debug_assert_eq!(node.as_rule().into(), Node::date_hint);
+    let hint = node.child();
+    match hint.as_rule().into() {
+        Node::weekday => {
+            let weekday = hint.child();
+            match weekday.as_rule().into() {
+                Node::WEEKDAY_0 => TimeHintDay::Weekday(Weekday::Mon),
+                Node::WEEKDAY_1 => TimeHintDay::Weekday(Weekday::Tue),
+                Node::WEEKDAY_2 => TimeHintDay::Weekday(Weekday::Wed),
+                Node::WEEKDAY_3 => TimeHintDay::Weekday(Weekday::Thu),
+                Node::WEEKDAY_4 => TimeHintDay::Weekday(Weekday::Fri),
+                Node::WEEKDAY_5 => TimeHintDay::Weekday(Weekday::Sat),
+                Node::WEEKDAY_6 => TimeHintDay::Weekday(Weekday::Sun),
+                _ => unreachable!(),
+            }
+        }
+        Node::year_month_day => {
+            let [year, month, day] = hint.children();
+            let year = parse_year(year);
+            let month = parse_month(month);
+            let day = parse_day(day);
+            TimeHintDay::YearMonthDay(year, month, day)
+        }
+        Node::month_day => {
+            let [month, day] = hint.children();
+            let month = parse_month(month);
+            let day = parse_day(day);
+            TimeHintDay::MonthDay(month, day)
+        }
+        Node::day => TimeHintDay::Day(parse_day(hint)),
         _ => unreachable!(),
     }
 }
@@ -256,21 +349,28 @@ fn parse_u32<R>(node: Pair<R>) -> u32
 where
     R: RuleType + Into<Node>,
 {
-    assert_eq!(node.as_rule().into(), Node::number);
+    debug_assert_eq!(node.as_rule().into(), Node::number);
+    node.as_str().parse().unwrap()
+}
+fn parse_day<R>(node: Pair<R>) -> u32
+where
+    R: RuleType + Into<Node>,
+{
+    debug_assert_eq!(node.as_rule().into(), Node::day);
     node.as_str().parse().unwrap()
 }
 fn parse_year<R>(node: Pair<R>) -> i32
 where
     R: RuleType + Into<Node>,
 {
-    assert_eq!(node.as_rule().into(), Node::year);
+    debug_assert_eq!(node.as_rule().into(), Node::year);
     node.as_str().parse().unwrap()
 }
 fn parse_time_zone<R>(node: Pair<R>) -> Result<Tz, ()>
 where
     R: RuleType + Into<Node>,
 {
-    assert_eq!(node.as_rule().into(), Node::time_zone);
+    debug_assert_eq!(node.as_rule().into(), Node::time_zone);
     match node.as_str() {
         "paris" | "Paris" => Ok(Tz::Europe__Paris),
         "madrid" | "Madrid" => Ok(Tz::Europe__Madrid),
@@ -281,7 +381,7 @@ fn parse_language<R>(node: Pair<R>) -> Result<Language, ()>
 where
     R: RuleType + Into<Node>,
 {
-    assert_eq!(node.as_rule().into(), Node::word);
+    debug_assert_eq!(node.as_rule().into(), Node::word);
     let language = node.as_str().normalize();
     match language.as_str() {
         "en" | "english" | "ingles" => Ok(Language::En),

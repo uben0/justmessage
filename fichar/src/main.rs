@@ -16,16 +16,16 @@ use fichar::{
     key_to_hex,
     language::Language,
     output::{Output, OutputDaySpan, OutputMonth},
-    state::AppState,
+    state::{AppState, instance::Span},
 };
 use indoc::{formatdoc, indoc};
 use render::Renderer;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display, time::Duration};
 use telegram::Update;
 use time_util::{DateTimeExt, TimeZoneExt};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
-use tracing::{Level, info};
+use tracing::{Level, info, warn};
 
 #[derive(Parser)]
 struct Args {
@@ -68,22 +68,29 @@ async fn main() {
         .init();
 
     if !reuse_cert {
-        let response =
-            telegram::set_webhook(&token, "https://fr1.justmessage.uben.ovh:8443".into())
-                .drop_pending_updates()
-                .certificate(pem_cert.clone().into())
-                .secret_token(secret_token.clone())
-                .send()
-                .await
-                .unwrap();
-        println!("{response:#?}");
+        let mut cooldown = 8;
+        while !telegram::set_webhook(&token, "https://fr1.justmessage.uben.ovh:8443".into())
+            .drop_pending_updates()
+            .certificate(pem_cert.clone().into())
+            .secret_token(secret_token.clone())
+            .send()
+            .await
+            .map(|response| response.status())
+            .unwrap_or(StatusCode::BAD_REQUEST)
+            .is_success()
+        {
+            warn!("failed to set webhook, retrying in {cooldown} seconds...");
+            tokio::time::sleep(Duration::from_secs(cooldown)).await;
+            cooldown *= 2;
+        }
+        info!("webhook set");
     }
 
     let (i_sender, i_receiver) = mpsc::channel::<Input>(8);
     let (o_sender, o_receiver) = mpsc::channel::<(Output, Context)>(8);
 
     let state = AppState::new();
-    let processor = tokio::spawn(state.process_inputs(i_receiver, o_sender));
+    let processor = tokio::spawn(process_inputs(state, i_receiver, o_sender));
     let sender = tokio::spawn(sender(token.clone(), o_receiver));
 
     let app = Router::new()
@@ -110,6 +117,16 @@ async fn main() {
 
     processor.await.unwrap();
     sender.await.unwrap();
+}
+
+async fn process_inputs(
+    mut state: AppState,
+    mut receiver: Receiver<Input>,
+    mut output: Sender<(Output, Context)>,
+) {
+    while let Some(input) = receiver.recv().await {
+        state.input(input, &mut output).await;
+    }
 }
 
 async fn printer(payload: String) -> StatusCode {
@@ -152,19 +169,32 @@ async fn check_secret_token(
     }
 }
 
+trait Logged {
+    async fn logged(self);
+}
+
+impl<T, E: std::fmt::Debug, F: Future<Output = Result<T, E>>> Logged for F {
+    async fn logged(self) {
+        match self.await {
+            Ok(_) => {}
+            Err(err) => warn!("error: {err:?}"),
+        }
+    }
+}
+
 async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
     let renderer = Renderer::new();
     while let Some((output, context)) = receiver.recv().await {
         match output {
             Output::Ok => {
                 telegram::send_text(&token, "ok".into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::Failure => {
                 telegram::send_text(&token, "fail".into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::PleasePromoteTheBot => {
                 let text = match context.language {
@@ -174,8 +204,8 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     }
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::YourAreNotPartOfAGroup => {
                 let text = match context.language {
@@ -183,8 +213,8 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => "No eres parte de une grupo.",
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::CouldNotRecognizeCommand => {
                 let text = match context.language {
@@ -192,8 +222,8 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => "El comando que escribiste no está reconocido.",
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::Help => {
                 let text = match context.language {
@@ -219,8 +249,8 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     "},
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::SpanHasEarlierLeaveThanEnter(span) => {
                 let enter = context.time_zone.instant(span.enter);
@@ -247,17 +277,18 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     ),
                 };
                 telegram::send_text(&token, text, context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::SpanOverrodeSpans(spans) => {
                 use std::fmt::Write;
                 let mut text = String::new();
-                match context.language {
-                    Language::En => writeln!(text, "The following time spans were overriden:"),
-                    Language::Es => writeln!(text, "Se anularon los siguientes tramos de tiempo:"),
-                }
-                .unwrap();
+                match (context.language, spans.len()) {
+                    (Language::En, 2..) => "The following time spans were overriden:",
+                    (Language::En, ..) => "The following time span was overriden:",
+                    (Language::Es, 2..) => "Se anularon los siguientes tramos de tiempo:",
+                    (Language::Es, ..) => "Se anuló el siguiente tramo de tiempo:",
+                };
                 let (from, to) = match context.language {
                     Language::En => ("from", "to"),
                     Language::Es => ("de", "a"),
@@ -271,8 +302,33 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     writeln!(text, "  - {date} {from} {enter} {to} {leave}").unwrap();
                 }
                 telegram::send_text(&token, text, context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
+            }
+            Output::ClearedSpans(spans) => {
+                use std::fmt::Write;
+                let mut text = String::new();
+                match (context.language, spans.len()) {
+                    (Language::En, 2..) => "The following time spans were cleared:",
+                    (Language::En, ..) => "The following time span was cleared:",
+                    (Language::Es, 2..) => "Se anularon los siguientes tramos de tiempo:",
+                    (Language::Es, ..) => "Se anuló el siguiente tramo de tiempo:",
+                };
+                let (from, to) = match context.language {
+                    Language::En => ("from", "to"),
+                    Language::Es => ("de", "a"),
+                };
+                for span in spans {
+                    let enter = context.time_zone.instant(span.enter);
+                    let leave = context.time_zone.instant(span.leave);
+                    let date = enter.format_ymd("/");
+                    let enter = enter.format_hm("h");
+                    let leave = leave.format_hm("h");
+                    writeln!(text, "  - {date} {from} {enter} {to} {leave}").unwrap();
+                }
+                telegram::send_text(&token, text, context.chat)
+                    .logged()
+                    .await;
             }
             Output::CouldNotInferMinute => {
                 let text = match context.language {
@@ -284,8 +340,21 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     }
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
+            }
+            Output::CouldNotInferDay => {
+                let text = match context.language {
+                    Language::En => {
+                        "I was not able to determine the date based on your indication."
+                    }
+                    Language::Es => {
+                        "No era capaz de determinar la fecha basandome en tu indicación."
+                    }
+                };
+                telegram::send_text(&token, text.into(), context.chat)
+                    .logged()
+                    .await;
             }
             Output::CouldNotInferMonth => {
                 let text = match context.language {
@@ -295,23 +364,19 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => "No era capaz de determinar el mes basandome en tu indicación.",
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::EnterOverrodeEntered(enter) => {
-                let enter = context
-                    .time_zone
-                    .timestamp_opt(enter, 0)
-                    .earliest()
-                    .unwrap();
+                let enter = context.time_zone.instant(enter);
 
                 let text = match context.language {
                     Language::En => "The previous entering time was overriden:",
                     Language::Es => "La hora de entrada previa se anuló:",
                 };
                 telegram::send_text(&token, format!("{text} {enter}"), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::TryLeaveButNotEntered => {
                 let text = match context.language {
@@ -321,18 +386,20 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => "Estás tratando de salir, pero no entraste en primer lugar.",
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
             }
             Output::Month {
                 person,
                 month,
                 spans,
+                name,
             } => {
                 let month = context.time_zone.instant(month);
 
                 let mut month = OutputMonth {
-                    name: "Unknown".to_string(),
+                    language: context.language,
+                    name,
                     year: month.year(),
                     month: month.month(),
                     spans: Vec::new(),
@@ -358,22 +425,48 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                         serde_json::to_string_pretty(&month).unwrap().into_bytes(),
                     )]),
                 );
-                telegram::send_photo(&token, image, context.chat)
-                    .await
-                    .unwrap();
+                if let Ok(image) = image {
+                    telegram::send_photo(&token, image, context.chat)
+                        .logged()
+                        .await;
+                } else {
+                    warn!("fail to generate document");
+                }
             }
             Output::IAmNowAdministrator => {
                 let text = match context.language {
                     Language::En => {
-                        "I am now administrator in the group. I can now see who is part of the group."
+                        "I am now administrator in the group. I can now see messages published in the group and respond to them."
                     }
                     Language::Es => {
-                        "Ahora soy administrador en el grupo. Ahora puedo ver quién es parte del grupo."
+                        "Ahora soy administrador en el grupo. Ahora puedo ver los mensages publicados en el grupo y contestarlos."
                     }
                 };
                 telegram::send_text(&token, text.into(), context.chat)
-                    .await
-                    .unwrap();
+                    .logged()
+                    .await;
+            }
+            Output::SpanAdded(span) => {
+                let text = match context.language {
+                    Language::En => "Time span registered:",
+                    Language::Es => "Tramo de tiempo registrado:",
+                };
+                let text = format!("{}\n{}", text, span.format(&context));
+                telegram::send_text(&token, text, context.chat)
+                    .logged()
+                    .await;
+            }
+            Output::Entered(enter) => {
+                let enter = context.time_zone.instant(enter);
+                let date = enter.format_ymd("/");
+                let time = enter.format_hm("h");
+                let text = match context.language {
+                    Language::En => format!("You enter on {date} at {time}"),
+                    Language::Es => format!("Entras el {date} a las {time}"),
+                };
+                telegram::send_text(&token, text, context.chat)
+                    .logged()
+                    .await;
             }
         }
     }

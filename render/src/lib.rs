@@ -144,7 +144,7 @@ impl Renderer {
         main: &str,
         sources: HashMap<&str, String>,
         bytes: HashMap<&str, Vec<u8>>,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, ()> {
         let main_id = FileId::new_fake(VirtualPath::new("main.typ"));
         let result = typst::compile::<PagedDocument>(&RendererWithFiles {
             main_id,
@@ -162,10 +162,10 @@ impl Renderer {
                 .map(|(path, bytes)| (FileId::new(None, VirtualPath::new(path)), Bytes::new(bytes)))
                 .collect(),
         });
-        let document = result.output.unwrap();
+        let document = result.output.map_err(|_| ())?;
         typst_render::render_merged(&document, 2.0, Abs::mm(2.0), None)
             .encode_png()
-            .unwrap()
+            .map_err(|_| ())
     }
 }
 

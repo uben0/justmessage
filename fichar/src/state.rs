@@ -3,20 +3,19 @@ use crate::{
     context::Context,
     input::Input,
     language::Language,
-    output::{Output, OutputMonth},
-    state::instance::{AddSpanError, Instance, LeaveError},
+    output::Output,
+    state::instance::{AddSpanError, Instance, LeaveError, Span},
 };
-use chrono::{Datelike, TimeZone};
 use chrono_tz::Tz;
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
-use time_util::TimeZoneExt;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 pub mod instance;
 
+#[derive(Debug, Clone)]
 pub struct AppState {
     instances: HashMap<i64, Instance>,
 }
@@ -30,6 +29,7 @@ impl AppState {
     pub async fn input(&mut self, input: Input, output: &mut Sender<(Output, Context)>) {
         match input {
             Input::Text {
+                user,
                 chat,
                 group,
                 person,
@@ -69,6 +69,12 @@ impl AppState {
                             language: instance.language,
                             time_zone: instance.time_zone,
                         };
+                        if let Some(first_name) = user.0 {
+                            instance.set_first_name(person, first_name);
+                        }
+                        if let Some(last_name) = user.1 {
+                            instance.set_last_name(person, last_name);
+                        }
                         match command::parse(context.language, &text) {
                             Err(()) => {
                                 output
@@ -125,16 +131,6 @@ impl AppState {
             }
         }
     }
-
-    pub async fn process_inputs(
-        mut self,
-        mut receiver: Receiver<Input>,
-        mut output: Sender<(Output, Context)>,
-    ) {
-        while let Some(input) = receiver.recv().await {
-            self.input(input, &mut output).await;
-        }
-    }
 }
 
 impl Instance {
@@ -146,19 +142,85 @@ impl Instance {
         output: &mut Vec<Output>,
     ) {
         let command = match command {
-            Command::SpanHint { enter, leave } => match (
-                enter.infer(self.time_zone, date),
-                leave.infer(self.time_zone, date),
-            ) {
-                (Some(enter), Some(leave)) => Command::Span {
-                    enter: enter.start,
-                    leave: leave.start,
-                },
-                (_, _) => {
-                    output.push(Output::CouldNotInferMinute);
+            Command::ClearHint { day } => match day.infer_past(self.time_zone, date) {
+                Some(day) => Command::Clear { day },
+                None => {
+                    output.push(Output::CouldNotInferDay);
                     return;
                 }
             },
+            Command::SpanHint {
+                enter_day: Some(enter_day),
+                enter_minute,
+                leave_day: Some(leave_day),
+                leave_minute,
+            } => {
+                let Some(enter) = enter_day.infer_past(self.time_zone, date) else {
+                    output.push(Output::CouldNotInferDay);
+                    return;
+                };
+                let Some(leave) = leave_day.infer_first_after(self.time_zone, enter.start) else {
+                    output.push(Output::CouldNotInferDay);
+                    return;
+                };
+                match (
+                    enter_minute.infer(self.time_zone, enter.start),
+                    leave_minute.infer(self.time_zone, leave.start),
+                ) {
+                    (Some(enter), Some(leave)) => Command::Span {
+                        enter: enter.start,
+                        leave: leave.start,
+                    },
+                    (_, _) => {
+                        output.push(Output::CouldNotInferMinute);
+                        return;
+                    }
+                }
+            }
+            Command::SpanHint {
+                enter_day: Some(enter_day),
+                enter_minute,
+                leave_day: None,
+                leave_minute,
+            } => {
+                let Some(date) = enter_day.infer_past(self.time_zone, date) else {
+                    output.push(Output::CouldNotInferDay);
+                    return;
+                };
+                let Some(enter) = enter_minute.infer(self.time_zone, date.start) else {
+                    output.push(Output::CouldNotInferMinute);
+                    return;
+                };
+                let Some(leave) = leave_minute.infer_first_after(self.time_zone, enter.start)
+                else {
+                    output.push(Output::CouldNotInferMinute);
+                    return;
+                };
+                Command::Span {
+                    enter: enter.start,
+                    leave: leave.start,
+                }
+            }
+            Command::SpanHint {
+                enter_day: None,
+                enter_minute,
+                leave_day: None,
+                leave_minute,
+            } => {
+                let Some(enter) = enter_minute.infer(self.time_zone, date) else {
+                    output.push(Output::CouldNotInferMinute);
+                    return;
+                };
+                let Some(leave) = leave_minute.infer_first_after(self.time_zone, enter.start)
+                else {
+                    output.push(Output::CouldNotInferMinute);
+                    return;
+                };
+                Command::Span {
+                    enter: enter.start,
+                    leave: leave.start,
+                }
+            }
             Command::EnterHint { time_hint } => match time_hint.infer(self.time_zone, date) {
                 Some(enter) => Command::Enter { enter: enter.start },
                 None => {
@@ -184,15 +246,25 @@ impl Instance {
         };
         match command {
             Command::Help => {
+                output.push(Output::Ok);
                 output.push(Output::Help);
             }
             Command::Nope => {}
+            Command::Clear { day } => {
+                let removed = self.clear(person, day.start, day.end);
+                output.push(Output::Ok);
+                if !removed.is_empty() {
+                    output.push(Output::ClearedSpans(removed));
+                }
+            }
             Command::Span { enter, leave } => match self.add_span(person, enter, leave) {
                 Ok(overriden) if overriden.is_empty() => {
                     output.push(Output::Ok);
+                    output.push(Output::SpanAdded(Span { enter, leave }));
                 }
                 Ok(overriden) => {
                     output.push(Output::Ok);
+                    output.push(Output::SpanAdded(Span { enter, leave }));
                     output.push(Output::SpanOverrodeSpans(overriden));
                 }
                 Err(AddSpanError::LeaveEarlierThanEnter(span)) => {
@@ -203,18 +275,22 @@ impl Instance {
             Command::Enter { enter } => match self.enter(person, enter) {
                 Some(overriden) => {
                     output.push(Output::Ok);
+                    output.push(Output::Entered(enter));
                     output.push(Output::EnterOverrodeEntered(overriden));
                 }
                 None => {
                     output.push(Output::Ok);
+                    output.push(Output::Entered(enter));
                 }
             },
             Command::Leave { leave } => match self.leave(person, leave) {
-                Ok(overriden) if overriden.is_empty() => {
+                Ok((added, overriden)) if overriden.is_empty() => {
                     output.push(Output::Ok);
+                    output.push(Output::SpanAdded(added));
                 }
-                Ok(overriden) => {
+                Ok((added, overriden)) => {
                     output.push(Output::Ok);
+                    output.push(Output::SpanAdded(added));
                     output.push(Output::SpanOverrodeSpans(overriden));
                 }
                 Err(LeaveError::NotEntered) => {
@@ -227,9 +303,13 @@ impl Instance {
                 }
             },
             Command::Month { month } => {
+                let name = self
+                    .get_name(person)
+                    .unwrap_or_else(|| "Unknown".to_string());
                 output.push(Output::Ok);
                 output.push(Output::Month {
                     person,
+                    name,
                     month: month.start,
                     spans: self.select(person, month.start, month.end),
                 });
@@ -242,6 +322,7 @@ impl Instance {
                 self.language = language;
                 output.push(Output::Ok);
             }
+            Command::ClearHint { .. } => unreachable!(),
             Command::SpanHint { .. } => unreachable!(),
             Command::EnterHint { .. } => unreachable!(),
             Command::LeaveHint { .. } => unreachable!(),

@@ -1,30 +1,44 @@
-WHITESPACE   = _{ " " }
-hour_minute  = ${ number ~ ":" ~ number | number ~ ^"h" ~ number ~ ^"m"? }
-number       = @{ ASCII_DIGIT+ }
-year         = @{ ASCII_DIGIT{4} }
-year_month   = ${ year ~ ("/" | "-" | WHITESPACE+ ) ~ month_n }
-month_year   = ${ month_n ~ ("/" | "-" | WHITESPACE+ ) ~ year }
-time_zone    = @{ (LETTER | "/" | "_")+ }
-name         = @{ (LETTER | "-" | "'")+ }
-bool         =  { bool_true | bool_false }
-targets      =  { target* }
-target       = ${ "@" ~ (target_index | target_all | target_me) }
-target_index = ${ number }
-month_n      = _{
-    month_01 |
-    month_02 |
-    month_03 |
-    month_04 |
-    month_05 |
-    month_06 |
-    month_07 |
-    month_08 |
-    month_09 |
-    month_10 |
-    month_11 |
-    month_12
+WHITESPACE     = _{ " " | "\n" | "\t" }
+hour_minute    = ${ number ~ ":" ~ number | number ~ ^"h" ~ number ~ ^"m"? }
+number         = @{ ASCII_DIGIT+ }
+year           = @{ ASCII_DIGIT{4} }
+day            = @{ ASCII_DIGIT{1,2} }
+date_sep       = _{ "/" | "-" | WHITESPACE+ }
+year_month     = ${ year ~ date_sep ~ month }
+month_year     = ${ month ~ date_sep ~ year }
+year_month_day = ${ year ~ date_sep ~ month ~ date_sep ~ day }
+month_day      = ${ month ~ date_sep ~ day }
+time_zone      = @{ (LETTER | "/" | "_")+ }
+name           = @{ (LETTER | "-" | "'")+ }
+bool           =  { TRUE | FALSE }
+targets        =  { target* }
+target         = ${ "@" ~ (target_index | TARGET_ALL | TARGET_ME) }
+target_index   = ${ number }
+word           = @{ (LETTER | "-")+ }
+date_hint      =  { year_month_day | month_day | weekday | day }
+month          = _{
+    MONTH_01 |
+    MONTH_02 |
+    MONTH_03 |
+    MONTH_04 |
+    MONTH_05 |
+    MONTH_06 |
+    MONTH_07 |
+    MONTH_08 |
+    MONTH_09 |
+    MONTH_10 |
+    MONTH_11 |
+    MONTH_12
 }
-word = @{ (LETTER | "-")+ }
+weekday = {
+    WEEKDAY_0 |
+    WEEKDAY_1 |
+    WEEKDAY_2 |
+    WEEKDAY_3 |
+    WEEKDAY_4 |
+    WEEKDAY_5 |
+    WEEKDAY_6
+}
 
 command = {
     SOI ~ (
@@ -34,8 +48,11 @@ command = {
         command_person_admin      |
         command_set_time_zone     |
         command_set_language      |
+        command_clear_date        |
+        command_clear             |
         command_span              |
-        command_span_day          |
+        command_span_date         |
+        command_span_date_date    |
         command_enter_hour_minute |
         command_enter             |
         command_leave_hour_minute |
@@ -46,18 +63,21 @@ command = {
     ) ~ EOI
 }
 
-command_help              = { help }
-command_persons           = { persons }
-command_person_admin      = { person ~ target ~ admin ~ bool }
-command_new_person        = { person ~ new ~ name+ }
-command_set_time_zone     = { set ~ TIME_ZONE ~ time_zone }
-command_set_language      = { set ~ language ~ word }
+command_help              = { HELP }
+command_persons           = { PERSONS }
+command_person_admin      = { PERSON ~ target ~ ADMIN ~ bool }
+command_new_person        = { PERSON ~ NEW ~ name+ }
+command_set_time_zone     = { SET ~ TIME_ZONE ~ time_zone }
+command_set_language      = { SET ~ LANGUAGE ~ word }
+command_clear             = { CLEAR }
+command_clear_date        = { CLEAR ~ date_hint }
 command_span              = { hour_minute ~ hour_minute }
-command_span_day          = { number ~ hour_minute ~ hour_minute }
-command_enter             = { enter }
-command_enter_hour_minute = { enter ~ hour_minute }
-command_leave             = { leave }
-command_leave_hour_minute = { leave ~ hour_minute }
-command_month             = { month }
-command_month_month       = { month? ~ month_n }
-command_month_year_month  = { month? ~ (year_month | month_year) }
+command_span_date         = { date_hint ~ hour_minute ~ hour_minute }
+command_span_date_date    = { date_hint ~ hour_minute ~ date_hint ~ hour_minute }
+command_enter             = { ENTER }
+command_enter_hour_minute = { ENTER ~ hour_minute }
+command_leave             = { LEAVE }
+command_leave_hour_minute = { LEAVE ~ hour_minute }
+command_month             = { MONTH }
+command_month_month       = { MONTH? ~ month }
+command_month_year_month  = { MONTH? ~ (year_month | month_year) }
