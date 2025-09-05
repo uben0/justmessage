@@ -6,9 +6,9 @@ use axum::{
     middleware::{self, Next},
     routing::post,
 };
-use axum_server::tls_rustls::RustlsConfig;
+use axum_server::{Handle, tls_rustls::RustlsConfig};
 use chrono::{Datelike, TimeZone};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use fichar::{
     context::Context,
     gen_key,
@@ -20,58 +20,60 @@ use fichar::{
 };
 use indoc::{formatdoc, indoc};
 use render::Renderer;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, time::Duration};
 use telegram::Update;
 use time_util::{DateTimeExt, TimeZoneExt};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::{
+    signal,
+    sync::mpsc::{self, Receiver, Sender},
+};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info, warn};
 
 #[derive(Parser)]
 struct Args {
-    #[arg(long)]
-    reuse_cert: bool,
-    // #[arg(long)]
-    // cert: PathBuf,
-    // #[arg(long)]
-    // key: PathBuf,
-    // #[arg(long)]
-    // token: String,
+    #[command(subcommand)]
+    command: Command,
 }
 
-#[tokio::main]
-async fn main() {
-    dotenvy::dotenv().ok();
-    let token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
-    let Args { reuse_cert } = Args::parse();
-    let (pem_cert, pem_key, secret_token) = if reuse_cert {
-        (
-            std::fs::read_to_string("cert.pem").unwrap(),
-            std::fs::read_to_string("key.pem").unwrap(),
-            std::fs::read_to_string("secret-token").unwrap(),
-        )
-    } else {
+#[derive(Debug, Clone, Subcommand)]
+enum Command {
+    Load {
+        #[arg(long)]
+        reset_hook: bool,
+    },
+    Init,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TotalState {
+    hook: Hook,
+    app_state: AppState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Hook {
+    bot_token: String,
+    secret_token: String,
+    cert_cert: String,
+    cert_key: String,
+}
+impl Hook {
+    async fn init() -> Self {
+        dotenvy::dotenv().ok();
+        let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
+
         let certificate =
             rcgen::generate_simple_self_signed(["fr1.justmessage.uben.ovh".to_string()]).unwrap();
-        let pem_cert = certificate.cert.pem();
-        let pem_key = certificate.signing_key.serialize_pem();
+        let cert_cert = certificate.cert.pem();
+        let cert_key = certificate.signing_key.serialize_pem();
         let secret_token = key_to_hex(gen_key());
-        std::fs::write("cert.pem", &pem_cert).unwrap();
-        std::fs::write("key.pem", &pem_key).unwrap();
-        std::fs::write("secret-token", &secret_token).unwrap();
-        (pem_cert, pem_key, secret_token)
-    };
 
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .compact()
-        .init();
-
-    if !reuse_cert {
         let mut cooldown = 8;
-        while !telegram::set_webhook(&token, "https://fr1.justmessage.uben.ovh:8443".into())
+        while !telegram::set_webhook(&bot_token, "https://fr1.justmessage.uben.ovh:8443".into())
             .drop_pending_updates()
-            .certificate(pem_cert.clone().into())
+            .certificate(cert_cert.clone().into())
             .secret_token(secret_token.clone())
             .send()
             .await
@@ -84,20 +86,52 @@ async fn main() {
             cooldown *= 2;
         }
         info!("webhook set");
+
+        Self {
+            bot_token,
+            secret_token,
+            cert_cert,
+            cert_key,
+        }
     }
+}
+
+#[tokio::main]
+async fn main() {
+    let Args { command } = Args::parse();
+
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .compact()
+        .init();
+
+    let state = match command {
+        Command::Load { reset_hook } => {
+            let bytes = std::fs::read("state.postcard").unwrap();
+            let mut state: TotalState = postcard::from_bytes(&bytes).unwrap();
+            if reset_hook {
+                state.hook = Hook::init().await;
+            }
+            state
+        }
+        Command::Init => TotalState {
+            app_state: AppState::new(),
+            hook: Hook::init().await,
+        },
+    };
+    let hook = state.hook.clone();
 
     let (i_sender, i_receiver) = mpsc::channel::<Input>(8);
     let (o_sender, o_receiver) = mpsc::channel::<(Output, Context)>(8);
 
-    let state = AppState::new();
     let processor = tokio::spawn(process_inputs(state, i_receiver, o_sender));
-    let sender = tokio::spawn(sender(token.clone(), o_receiver));
+    let sender = tokio::spawn(sender(hook.bot_token.clone(), o_receiver));
 
     let app = Router::new()
         .route("/", post(handler))
         .with_state(i_sender)
         .layer(middleware::from_fn_with_state(
-            HeaderValue::from_str(&secret_token).unwrap(),
+            HeaderValue::from_str(&hook.secret_token).unwrap(),
             check_secret_token,
         ))
         .layer(
@@ -107,26 +141,36 @@ async fn main() {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    let tls_conf = RustlsConfig::from_pem(pem_cert.into(), pem_key.into())
+    let tls_conf = RustlsConfig::from_pem(hook.cert_cert.into(), hook.cert_key.into())
         .await
         .unwrap();
-    axum_server::bind_rustls(([0, 0, 0, 0], 8443).into(), tls_conf)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    let handle = Handle::new();
+    let server = axum_server::bind_rustls(([0, 0, 0, 0], 8443).into(), tls_conf)
+        .handle(handle.clone())
+        .serve(app.into_make_service());
 
-    processor.await.unwrap();
+    termination_signal(handle);
+    server.await.unwrap();
+
+    let state = processor.await.unwrap();
     sender.await.unwrap();
+
+    info!("graceful shutdown");
+
+    let bytes = postcard::to_allocvec(&state).unwrap();
+    std::fs::write("state.postcard", &bytes).unwrap();
+    info!("state writen to disk");
 }
 
 async fn process_inputs(
-    mut state: AppState,
+    mut state: TotalState,
     mut receiver: Receiver<Input>,
     mut output: Sender<(Output, Context)>,
-) {
+) -> TotalState {
     while let Some(input) = receiver.recv().await {
-        state.input(input, &mut output).await;
+        state.app_state.input(input, &mut output).await;
     }
+    state
 }
 
 async fn printer(payload: String) -> StatusCode {
@@ -470,4 +514,32 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
             }
         }
     }
+}
+
+fn termination_signal(handle: Handle) {
+    tokio::spawn(async move {
+        let ctrl_c = async {
+            signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            signal::unix::signal(signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        handle.graceful_shutdown(None);
+    });
 }

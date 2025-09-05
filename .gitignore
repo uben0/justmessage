@@ -1,7 +1,4 @@
 /target
-/state
+/state.postcard
 /.env
 /Cargo.lock
-/cert.pem
-/key.pem
-/secret-token

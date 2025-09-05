@@ -1,17 +1,17 @@
+use crate::language::Language;
 use chrono_tz::Tz;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, ops::Range};
 use time_util::TimeZoneExt;
 
-use crate::language::Language;
-use std::{collections::HashMap, ops::Range};
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instance {
     pub language: Language,
     pub time_zone: Tz,
     persons: HashMap<i64, Person>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Person {
     spans: Vec<Span>,
     entered: Option<i64>,
@@ -19,7 +19,7 @@ pub struct Person {
     pub last_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {
     pub enter: i64,
     pub leave: i64,

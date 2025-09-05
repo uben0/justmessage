@@ -7,6 +7,7 @@ use crate::{
     state::instance::{AddSpanError, Instance, LeaveError, Span},
 };
 use chrono_tz::Tz;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -15,7 +16,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 pub mod instance;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     instances: HashMap<i64, Instance>,
 }
