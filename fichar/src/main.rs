@@ -8,7 +8,7 @@ use axum::{
 };
 use axum_server::{Handle, tls_rustls::RustlsConfig};
 use chrono::Datelike;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use fichar::{
     context::Context,
     gen_key,
@@ -30,9 +30,11 @@ use tokio::{
 };
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 struct Args {
+    env: Env,
     #[command(subcommand)]
     command: Command,
 }
@@ -44,9 +46,7 @@ enum Command {
         reset_hook: bool,
     },
     Init {
-        #[arg(long)]
         domain: String,
-        #[arg(long)]
         port: u16,
     },
 }
@@ -122,14 +122,28 @@ impl Hook {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Env {
+    Prod,
+    Dev,
+}
+
 #[tokio::main]
 async fn main() {
-    let Args { command } = Args::parse();
+    let Args { env, command } = Args::parse();
 
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .compact()
-        .init();
+    match env {
+        Env::Prod => {
+            tracing_subscriber::registry()
+                .with(tracing_journald::layer().unwrap())
+                .init();
+        }
+        Env::Dev => {
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().pretty())
+                .init();
+        }
+    }
 
     match command {
         Command::Load { reset_hook } => {
@@ -180,7 +194,12 @@ async fn main() {
             state
         }
         Command::Init { domain, port } => {
-            dotenvy::dotenv().ok();
+            match env {
+                Env::Prod => {}
+                Env::Dev => {
+                    dotenvy::dotenv().ok();
+                }
+            }
             let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
 
             TotalState {
@@ -226,9 +245,9 @@ async fn handler(
 ) -> StatusCode {
     match payload {
         Ok(Json(update)) => {
-            println!("{update:#?}");
+            // println!("{update:#?}");
             if let Ok(input) = Input::try_from(update) {
-                println!("{input:#?}");
+                // println!("{input:#?}");
                 sender.send(input).await.unwrap();
             }
         }
