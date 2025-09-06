@@ -336,8 +336,9 @@ impl Instance {
                     return;
                 }
             },
-            Command::MonthHint { time_hint } => match time_hint.infer(self.time_zone, date) {
-                Some(month) => Command::Month { month },
+            Command::MonthHint { time_hint, format } => match time_hint.infer(self.time_zone, date)
+            {
+                Some(month) => Command::Month { month, format },
                 None => {
                     output.push(Output::CouldNotInferMonth);
                     return;
@@ -403,7 +404,7 @@ impl Instance {
                     output.push(Output::SpanHasEarlierLeaveThanEnter(span));
                 }
             },
-            Command::Month { month } => {
+            Command::Month { month, format } => {
                 let name = self
                     .get_name(person)
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -411,6 +412,7 @@ impl Instance {
                 output.push(Output::Month {
                     person,
                     name,
+                    format,
                     month: month.start,
                     spans: self.select(person, month.start, month.end),
                 });

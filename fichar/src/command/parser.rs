@@ -9,6 +9,7 @@ use time_util::TimeHintMonth;
 use tracing::error;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::command::DocFormat;
 use crate::{command::Command, language::Language};
 
 pub mod en {
@@ -104,6 +105,8 @@ common_node!(
         WEEKDAY_4,
         WEEKDAY_5,
         WEEKDAY_6,
+        PDF,
+        pdf,
         word,
         hour_minute,
         number,
@@ -232,17 +235,22 @@ where
                         time_hint: TimeHintMinute::HourMinute(parse_u32(hour), parse_u32(minute)),
                     }
                 }
-                Node::command_month => Command::MonthHint {
-                    time_hint: TimeHintMonth::None,
-                },
+                Node::command_month => {
+                    let format = command.child();
+                    Command::MonthHint {
+                        time_hint: TimeHintMonth::None,
+                        format: parse_format(format),
+                    }
+                }
                 Node::command_month_month => {
-                    let month = command.child();
+                    let [month, format] = command.children();
                     Command::MonthHint {
                         time_hint: TimeHintMonth::Month(parse_month(month)),
+                        format: parse_format(format),
                     }
                 }
                 Node::command_month_year_month => {
-                    let month = command.child();
+                    let [month, format] = command.children();
                     let order = month.as_rule().into();
                     let [lhs, rhs] = month.children();
                     let (year, month) = match order {
@@ -252,6 +260,7 @@ where
                     };
                     Command::MonthHint {
                         time_hint: TimeHintMonth::YearMonth(parse_year(year), parse_month(month)),
+                        format: parse_format(format),
                     }
                 }
                 Node::command_set_time_zone => {
@@ -275,6 +284,19 @@ where
         Err(_) => Err(()),
     }
 }
+
+fn parse_format<R>(node: Pair<R>) -> DocFormat
+where
+    R: RuleType + Into<Node>,
+{
+    debug_assert_eq!(node.as_rule().into(), Node::pdf);
+    if node.into_inner().next().is_some() {
+        DocFormat::Pdf
+    } else {
+        DocFormat::Png
+    }
+}
+
 fn parse_month<R>(node: Pair<R>) -> u32
 where
     R: RuleType + Into<Node>,

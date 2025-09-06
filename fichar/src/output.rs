@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::{context::Context, language::Language, state::instance::Span};
 use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use render::DocFormat;
 use serde::Serialize;
 use time_util::{DateTimeExt, TimeZoneExt};
 
@@ -24,6 +25,7 @@ pub enum Output {
     CouldNotInferDay,
     CouldNotInferMonth,
     Month {
+        format: DocFormat,
         person: i64,
         name: String,
         month: i64,
@@ -106,7 +108,7 @@ impl<'a> Display for SpanFormatter<'a> {
     }
 }
 impl Span {
-    pub fn format(self, context: &Context) -> SpanFormatter {
+    pub fn format<'a>(self, context: &'a Context) -> SpanFormatter<'a> {
         SpanFormatter {
             context,
             span: self,

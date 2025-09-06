@@ -12,6 +12,12 @@ use typst::{
     utils::LazyHash,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum DocFormat {
+    Png,
+    Pdf,
+}
+
 pub struct Renderer {
     library: LazyHash<Library>,
     font_book: LazyHash<FontBook>,
@@ -144,6 +150,7 @@ impl Renderer {
         main: &str,
         sources: HashMap<&str, String>,
         bytes: HashMap<&str, Vec<u8>>,
+        format: DocFormat,
     ) -> Result<Vec<u8>, ()> {
         let main_id = FileId::new_fake(VirtualPath::new("main.typ"));
         let result = typst::compile::<PagedDocument>(&RendererWithFiles {
@@ -163,9 +170,12 @@ impl Renderer {
                 .collect(),
         });
         let document = result.output.map_err(|_| ())?;
-        typst_render::render_merged(&document, 2.0, Abs::mm(2.0), None)
-            .encode_png()
-            .map_err(|_| ())
+        match format {
+            DocFormat::Png => typst_render::render_merged(&document, 2.0, Abs::mm(2.0), None)
+                .encode_png()
+                .map_err(|_| ()),
+            DocFormat::Pdf => typst_pdf::pdf(&document, &Default::default()).map_err(|_| ()),
+        }
     }
 }
 

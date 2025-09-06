@@ -96,6 +96,21 @@ pub async fn send_photo(token: &str, photo: Vec<u8>, chat_id: i64) -> Result<Res
         .await
 }
 
+pub async fn send_document(
+    token: &str,
+    document: Vec<u8>,
+    chat_id: i64,
+) -> Result<Response, Error> {
+    client(token, "sendDocument")
+        .multipart(
+            Form::new()
+                .part("chat_id", Part::text(format!("{}", chat_id)))
+                .part("document", Part::bytes(document).file_name("month.pdf")),
+        )
+        .send()
+        .await
+}
+
 pub async fn send_text(token: &str, text: String, chat_id: i64) -> Result<Response, Error> {
     client(token, "sendMessage")
         .multipart(

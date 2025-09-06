@@ -1,5 +1,6 @@
 use crate::language::Language;
 use chrono_tz::Tz;
+use render::DocFormat;
 use std::ops::Range;
 use time_util::{TimeHintDay, TimeHintMinute, TimeHintMonth};
 
@@ -7,6 +8,7 @@ mod parser;
 
 pub use parser::parse;
 
+#[derive(Debug, Clone)]
 pub enum Command {
     Help,
     Nope,
@@ -40,9 +42,11 @@ pub enum Command {
     },
     MonthHint {
         time_hint: TimeHintMonth,
+        format: DocFormat,
     },
     Month {
         month: Range<i64>,
+        format: DocFormat,
     },
     SetTimeZone {
         time_zone: Tz,

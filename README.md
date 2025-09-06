@@ -1,8 +1,10 @@
 # TODO
 
 - [ ] commands
-  - [ ] enter - leave
-  - [ ] pdf export
+  - [x] enter - leave
+  - [x] pdf export
+  - [ ] enter date
+  - [ ] leave date
 - [ ] group title
 - [ ] check journald logs
 - [ ] react to message
@@ -41,16 +43,17 @@
 # COMMAND LIST
 
 ```
-enter                 // adds a pending entry for right now
-enter 18h30           // adds a pending entry for today at 18h30
-leave                 // adds a span by using pending entry for right now
-leave 21h15           // adds a span by using pending entry instant (today)
-11h40 15h00           // adds a span today
-tuesday 11h40 15h00   // adds a span last tuesday
-24 11h40 15h00        // adds a span the 24th of the month
-2025/09               // prints summary of september 2025
-july                  // prints summary of july of this year
-month                 // prints summary of this month
-clear                 // removes all span from today
-clear monday          // removes all span from last monday
+enter                    // adds a pending entry for right now
+enter 18h30              // adds a pending entry for today at 18h30
+leave                    // adds a span by using pending entry for right now
+leave 21h15              // adds a span by using pending entry instant (today)
+enter 11h40 leave 15h00  // adds a span today
+11h40 15h00              // adds a span today
+tuesday 11h40 15h00      // adds a span last tuesday
+24 11h40 15h00           // adds a span the 24th of the month
+2025/09                  // prints summary of september 2025
+july                     // prints summary of july of this year
+month                    // prints summary of this month
+clear                    // removes all span from today
+clear monday             // removes all span from last monday
 ```

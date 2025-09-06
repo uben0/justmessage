@@ -1,5 +1,3 @@
-use std::{collections::HashMap, time::Duration};
-
 use axum::{
     Json, Router,
     body::Body,
@@ -19,7 +17,8 @@ use fichar::{
     state::AppState,
 };
 use indoc::{formatdoc, indoc};
-use render::Renderer;
+use render::{DocFormat, Renderer};
+use std::collections::HashMap;
 use telegram::Update;
 use time_util::{DateTimeExt, TimeZoneExt};
 use tokio::{
@@ -402,6 +401,7 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
             }
             Output::Month {
                 person: _,
+                format,
                 month,
                 spans,
                 name,
@@ -428,18 +428,28 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     month.minutes += span.minutes();
                 }
 
-                let image = renderer.render(
+                let document = renderer.render(
                     include_str!("month.typ"),
                     HashMap::new(),
                     HashMap::from([(
                         "month.json",
                         serde_json::to_string_pretty(&month).unwrap().into_bytes(),
                     )]),
+                    format,
                 );
-                if let Ok(image) = image {
-                    telegram::send_photo(&token, image, context.chat)
-                        .logged()
-                        .await;
+                if let Ok(document) = document {
+                    match format {
+                        DocFormat::Png => {
+                            telegram::send_photo(&token, document, context.chat)
+                                .logged()
+                                .await
+                        }
+                        DocFormat::Pdf => {
+                            telegram::send_document(&token, document, context.chat)
+                                .logged()
+                                .await
+                        }
+                    }
                 } else {
                     warn!("fail to generate document");
                 }
