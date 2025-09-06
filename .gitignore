@@ -1,4 +1,6 @@
 /target
 /state.postcard
+/state.postcard.bak
+/state.postcard.tmp
 /.env
 /Cargo.lock

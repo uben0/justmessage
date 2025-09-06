@@ -1,11 +1,14 @@
 # TODO
 
+- [ ] commands
+  - [ ] enter - leave
+  - [ ] pdf export
+- [ ] group title
+- [ ] check journald logs
 - [ ] react to message
 - [ ] tests
-- [ ] pdf export
-- [ ] group title
-- [ ] safe file write
 
+- [x] safe file write
 - [x] bot for dev
 - [x] auto save
 - [x] month with languages

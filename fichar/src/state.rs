@@ -88,13 +88,17 @@ impl Hook {
 
 impl AppState {
     const FILE_PATH: &str = "state.postcard";
+    const FILE_PATH_TMP: &str = "state.postcard.tmp";
+    const FILE_PATH_BAK: &str = "state.postcard.bak";
     pub fn load() -> Self {
         let bytes = std::fs::read(Self::FILE_PATH).unwrap();
         postcard::from_bytes(&bytes).unwrap()
     }
     pub fn save(&self) {
         let bytes = postcard::to_allocvec(self).unwrap();
-        std::fs::write(Self::FILE_PATH, &bytes).unwrap();
+        std::fs::write(Self::FILE_PATH_TMP, &bytes).unwrap();
+        std::fs::rename(Self::FILE_PATH, Self::FILE_PATH_BAK).unwrap();
+        std::fs::rename(Self::FILE_PATH_TMP, Self::FILE_PATH).unwrap();
         info!("state writen to disk");
     }
     pub async fn process_inputs(
