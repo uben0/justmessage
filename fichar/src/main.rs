@@ -65,10 +65,7 @@ struct Hook {
     cert_key: String,
 }
 impl Hook {
-    fn init() -> Self {
-        dotenvy::dotenv().ok();
-        let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
-
+    fn init(bot_token: String) -> Self {
         let certificate =
             rcgen::generate_simple_self_signed(["fr1.justmessage.uben.ovh".to_string()]).unwrap();
         let cert_cert = certificate.cert.pem();
@@ -119,7 +116,7 @@ async fn main() {
             let mut state = TotalState::load();
 
             if reset_hook {
-                state.hook = Hook::init();
+                state.hook = Hook::init(state.hook.bot_token);
                 state.hook.set().await;
             }
 
@@ -162,10 +159,15 @@ async fn main() {
             info!("graceful shutdown");
             state
         }
-        Command::Init => TotalState {
-            app_state: AppState::new(),
-            hook: Hook::init(),
-        },
+        Command::Init => {
+            dotenvy::dotenv().ok();
+            let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
+
+            TotalState {
+                app_state: AppState::new(),
+                hook: Hook::init(bot_token),
+            }
+        }
     }
     .save();
 }
