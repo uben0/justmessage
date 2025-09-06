@@ -7,7 +7,6 @@ use time_util::TimeHintDay;
 use time_util::TimeHintMinute;
 use time_util::TimeHintMonth;
 use tracing::error;
-use tracing::warn;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{command::Command, language::Language};

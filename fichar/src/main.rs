@@ -7,7 +7,7 @@ use axum::{
     routing::post,
 };
 use axum_server::{Handle, tls_rustls::RustlsConfig};
-use chrono::{Datelike, TimeZone};
+use chrono::Datelike;
 use clap::{Parser, Subcommand};
 use fichar::{
     context::Context,
@@ -16,12 +16,12 @@ use fichar::{
     key_to_hex,
     language::Language,
     output::{Output, OutputDaySpan, OutputMonth},
-    state::{AppState, instance::Span},
+    state::AppState,
 };
 use indoc::{formatdoc, indoc};
 use render::Renderer;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use telegram::Update;
 use time_util::{DateTimeExt, TimeZoneExt};
 use tokio::{
@@ -45,6 +45,11 @@ enum Command {
     },
     Init,
 }
+impl Default for Command {
+    fn default() -> Self {
+        Self::Load { reset_hook: true }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TotalState {
@@ -60,7 +65,7 @@ struct Hook {
     cert_key: String,
 }
 impl Hook {
-    async fn init() -> Self {
+    fn init() -> Self {
         dotenvy::dotenv().ok();
         let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
 
@@ -70,29 +75,33 @@ impl Hook {
         let cert_key = certificate.signing_key.serialize_pem();
         let secret_token = key_to_hex(gen_key());
 
-        let mut cooldown = 8;
-        while !telegram::set_webhook(&bot_token, "https://fr1.justmessage.uben.ovh:8443".into())
-            .drop_pending_updates()
-            .certificate(cert_cert.clone().into())
-            .secret_token(secret_token.clone())
-            .send()
-            .await
-            .map(|response| response.status())
-            .unwrap_or(StatusCode::BAD_REQUEST)
-            .is_success()
-        {
-            warn!("failed to set webhook, retrying in {cooldown} seconds...");
-            tokio::time::sleep(Duration::from_secs(cooldown)).await;
-            cooldown *= 2;
-        }
-        info!("webhook set");
-
         Self {
             bot_token,
             secret_token,
             cert_cert,
             cert_key,
         }
+    }
+    async fn set(&self) {
+        let mut cooldown = 8;
+        while !telegram::set_webhook(
+            &self.bot_token,
+            "https://fr1.justmessage.uben.ovh:8443".into(),
+        )
+        .drop_pending_updates()
+        .certificate(self.cert_cert.clone().into())
+        .secret_token(self.secret_token.clone())
+        .send()
+        .await
+        .map(|response| response.status())
+        .unwrap_or(StatusCode::BAD_REQUEST)
+        .is_success()
+        {
+            warn!("failed to set webhook, retrying in {cooldown} seconds...");
+            tokio::time::sleep(Duration::from_secs(cooldown)).await;
+            cooldown *= 2;
+        }
+        info!("webhook set");
     }
 }
 
@@ -105,78 +114,89 @@ async fn main() {
         .compact()
         .init();
 
-    let state = match command {
+    match command {
         Command::Load { reset_hook } => {
-            let bytes = std::fs::read("state.postcard").unwrap();
-            let mut state: TotalState = postcard::from_bytes(&bytes).unwrap();
+            let mut state = TotalState::load();
+
             if reset_hook {
-                state.hook = Hook::init().await;
+                state.hook = Hook::init();
+                state.hook.set().await;
             }
+
+            let hook = state.hook.clone();
+
+            let (i_sender, i_receiver) = mpsc::channel::<Input>(8);
+            let (o_sender, o_receiver) = mpsc::channel::<(Output, Context)>(8);
+
+            let processor = tokio::spawn(state.process_inputs(i_receiver, o_sender));
+            let sender = tokio::spawn(sender(hook.bot_token.clone(), o_receiver));
+
+            let app = Router::new()
+                .route("/", post(handler))
+                .with_state(i_sender)
+                .layer(middleware::from_fn_with_state(
+                    HeaderValue::from_str(&hook.secret_token).unwrap(),
+                    check_secret_token,
+                ))
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                        .on_request(DefaultOnRequest::new().level(Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                );
+
+            let tls_conf = RustlsConfig::from_pem(hook.cert_cert.into(), hook.cert_key.into())
+                .await
+                .unwrap();
+            let handle = Handle::new();
+            let server = axum_server::bind_rustls(([0, 0, 0, 0], 8443).into(), tls_conf)
+                .handle(handle.clone())
+                .serve(app.into_make_service());
+
+            termination_signal(handle);
+            server.await.unwrap();
+
+            let state = processor.await.unwrap();
+            sender.await.unwrap();
+
+            info!("graceful shutdown");
             state
         }
         Command::Init => TotalState {
             app_state: AppState::new(),
-            hook: Hook::init().await,
+            hook: Hook::init(),
         },
-    };
-    let hook = state.hook.clone();
-
-    let (i_sender, i_receiver) = mpsc::channel::<Input>(8);
-    let (o_sender, o_receiver) = mpsc::channel::<(Output, Context)>(8);
-
-    let processor = tokio::spawn(process_inputs(state, i_receiver, o_sender));
-    let sender = tokio::spawn(sender(hook.bot_token.clone(), o_receiver));
-
-    let app = Router::new()
-        .route("/", post(handler))
-        .with_state(i_sender)
-        .layer(middleware::from_fn_with_state(
-            HeaderValue::from_str(&hook.secret_token).unwrap(),
-            check_secret_token,
-        ))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_request(DefaultOnRequest::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        );
-
-    let tls_conf = RustlsConfig::from_pem(hook.cert_cert.into(), hook.cert_key.into())
-        .await
-        .unwrap();
-    let handle = Handle::new();
-    let server = axum_server::bind_rustls(([0, 0, 0, 0], 8443).into(), tls_conf)
-        .handle(handle.clone())
-        .serve(app.into_make_service());
-
-    termination_signal(handle);
-    server.await.unwrap();
-
-    let state = processor.await.unwrap();
-    sender.await.unwrap();
-
-    info!("graceful shutdown");
-
-    let bytes = postcard::to_allocvec(&state).unwrap();
-    std::fs::write("state.postcard", &bytes).unwrap();
-    info!("state writen to disk");
-}
-
-async fn process_inputs(
-    mut state: TotalState,
-    mut receiver: Receiver<Input>,
-    mut output: Sender<(Output, Context)>,
-) -> TotalState {
-    while let Some(input) = receiver.recv().await {
-        state.app_state.input(input, &mut output).await;
     }
-    state
+    .save();
 }
 
-async fn printer(payload: String) -> StatusCode {
-    println!("{payload}");
-    StatusCode::OK
+impl TotalState {
+    const FILE_PATH: &str = "state.postcard";
+    fn load() -> Self {
+        let bytes = std::fs::read(Self::FILE_PATH).unwrap();
+        postcard::from_bytes(&bytes).unwrap()
+    }
+    fn save(&self) {
+        let bytes = postcard::to_allocvec(self).unwrap();
+        std::fs::write(Self::FILE_PATH, &bytes).unwrap();
+        info!("state writen to disk");
+    }
+    async fn process_inputs(
+        mut self,
+        mut receiver: Receiver<Input>,
+        mut output: Sender<(Output, Context)>,
+    ) -> Self {
+        while let Some(input) = receiver.recv().await {
+            self.app_state.input(input, &mut output).await;
+        }
+        self
+    }
 }
+
+// async fn printer(payload: String) -> StatusCode {
+//     println!("{payload}");
+//     StatusCode::OK
+// }
 
 async fn handler(
     sender: State<Sender<Input>>,
@@ -434,7 +454,7 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     .await;
             }
             Output::Month {
-                person,
+                person: _,
                 month,
                 spans,
                 name,

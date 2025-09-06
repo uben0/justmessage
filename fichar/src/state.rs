@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 
 pub mod instance;
 
@@ -29,6 +29,9 @@ impl AppState {
     }
     pub async fn input(&mut self, input: Input, output: &mut Sender<(Output, Context)>) {
         match input {
+            Input::AutoSave => {
+                todo!()
+            }
             Input::Text {
                 user,
                 chat,

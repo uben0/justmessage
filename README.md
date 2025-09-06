@@ -3,6 +3,9 @@
 - [ ] react to message
 - [ ] tests
 - [ ] pdf export
+- [ ] group title
+- [ ] auto save
+- [ ] bot for dev
 
 - [x] month with languages
 - [x] adapt word to singular or plural
@@ -13,13 +16,10 @@
 - [x] always give feedback on taken action
 - [x] grammar token to upper case
 - [x] display of date and time
+- [x] instance based on group
 
 # ROADMAP
 
-- [ ] mechanism to query unknown informations
-  - group title or user name
-  - use a channel that either get on instance or send request
-- [x] instance based on group
 - [ ] use normalized str for time zone
 - [ ] admin console
 - [ ] clippy

@@ -1,6 +1,5 @@
 use chrono::{
-    DateTime, Datelike, Days, Duration, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone,
-    Timelike, Weekday,
+    DateTime, Datelike, Days, Months, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Weekday,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Range};
