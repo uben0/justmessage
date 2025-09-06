@@ -43,7 +43,12 @@ enum Command {
         #[arg(long)]
         reset_hook: bool,
     },
-    Init,
+    Init {
+        #[arg(long)]
+        domain: String,
+        #[arg(long)]
+        port: u16,
+    },
 }
 impl Default for Command {
     fn default() -> Self {
@@ -59,31 +64,46 @@ struct TotalState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Hook {
+    port: u16,
+    domain: String,
     bot_token: String,
     secret_token: String,
     cert_cert: String,
     cert_key: String,
 }
 impl Hook {
-    fn init(bot_token: String) -> Self {
-        let certificate =
-            rcgen::generate_simple_self_signed(["fr1.justmessage.uben.ovh".to_string()]).unwrap();
+    fn reset(self) -> Self {
+        let certificate = rcgen::generate_simple_self_signed([self.domain.clone()]).unwrap();
         let cert_cert = certificate.cert.pem();
         let cert_key = certificate.signing_key.serialize_pem();
         let secret_token = key_to_hex(gen_key());
 
         Self {
-            bot_token,
             secret_token,
             cert_cert,
             cert_key,
+            ..self
         }
+    }
+    fn init(bot_token: String, domain: String) -> Self {
+        Self {
+            port: 443,
+            domain,
+            bot_token,
+            secret_token: String::new(),
+            cert_cert: String::new(),
+            cert_key: String::new(),
+        }
+        .reset()
+    }
+    fn port(self, port: u16) -> Self {
+        Self { port, ..self }
     }
     async fn set(&self) {
         let mut cooldown = 8;
         while !telegram::set_webhook(
             &self.bot_token,
-            "https://fr1.justmessage.uben.ovh:8443".into(),
+            format!("https://{}:{}", self.domain, self.port),
         )
         .drop_pending_updates()
         .certificate(self.cert_cert.clone().into())
@@ -116,7 +136,7 @@ async fn main() {
             let mut state = TotalState::load();
 
             if reset_hook {
-                state.hook = Hook::init(state.hook.bot_token);
+                state.hook = state.hook.reset();
                 state.hook.set().await;
             }
 
@@ -146,7 +166,7 @@ async fn main() {
                 .await
                 .unwrap();
             let handle = Handle::new();
-            let server = axum_server::bind_rustls(([0, 0, 0, 0], 8443).into(), tls_conf)
+            let server = axum_server::bind_rustls(([0, 0, 0, 0], hook.port).into(), tls_conf)
                 .handle(handle.clone())
                 .serve(app.into_make_service());
 
@@ -159,13 +179,13 @@ async fn main() {
             info!("graceful shutdown");
             state
         }
-        Command::Init => {
+        Command::Init { domain, port } => {
             dotenvy::dotenv().ok();
             let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
 
             TotalState {
                 app_state: AppState::new(),
-                hook: Hook::init(bot_token),
+                hook: Hook::init(bot_token, domain).port(port),
             }
         }
     }
