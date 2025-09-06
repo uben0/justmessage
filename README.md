@@ -4,9 +4,10 @@
 - [ ] tests
 - [ ] pdf export
 - [ ] group title
-- [ ] auto save
-- [ ] bot for dev
+- [ ] safe file write
 
+- [x] bot for dev
+- [x] auto save
 - [x] month with languages
 - [x] adapt word to singular or plural
 - [x] infer minute past given time

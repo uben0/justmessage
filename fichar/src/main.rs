@@ -1,3 +1,5 @@
+use std::{collections::HashMap, time::Duration};
+
 use axum::{
     Json, Router,
     body::Body,
@@ -11,17 +13,13 @@ use chrono::Datelike;
 use clap::{Parser, Subcommand, ValueEnum};
 use fichar::{
     context::Context,
-    gen_key,
     input::Input,
-    key_to_hex,
     language::Language,
     output::{Output, OutputDaySpan, OutputMonth},
     state::AppState,
 };
 use indoc::{formatdoc, indoc};
 use render::Renderer;
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
 use telegram::Update;
 use time_util::{DateTimeExt, TimeZoneExt};
 use tokio::{
@@ -56,72 +54,6 @@ impl Default for Command {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TotalState {
-    hook: Hook,
-    app_state: AppState,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Hook {
-    port: u16,
-    domain: String,
-    bot_token: String,
-    secret_token: String,
-    cert_cert: String,
-    cert_key: String,
-}
-impl Hook {
-    fn reset(self) -> Self {
-        let certificate = rcgen::generate_simple_self_signed([self.domain.clone()]).unwrap();
-        let cert_cert = certificate.cert.pem();
-        let cert_key = certificate.signing_key.serialize_pem();
-        let secret_token = key_to_hex(gen_key());
-
-        Self {
-            secret_token,
-            cert_cert,
-            cert_key,
-            ..self
-        }
-    }
-    fn init(bot_token: String, domain: String) -> Self {
-        Self {
-            port: 443,
-            domain,
-            bot_token,
-            secret_token: String::new(),
-            cert_cert: String::new(),
-            cert_key: String::new(),
-        }
-        .reset()
-    }
-    fn port(self, port: u16) -> Self {
-        Self { port, ..self }
-    }
-    async fn set(&self) {
-        let mut cooldown = 8;
-        while !telegram::set_webhook(
-            &self.bot_token,
-            format!("https://{}:{}", self.domain, self.port),
-        )
-        .drop_pending_updates()
-        .certificate(self.cert_cert.clone().into())
-        .secret_token(self.secret_token.clone())
-        .send()
-        .await
-        .map(|response| response.status())
-        .unwrap_or(StatusCode::BAD_REQUEST)
-        .is_success()
-        {
-            warn!("failed to set webhook, retrying in {cooldown} seconds...");
-            tokio::time::sleep(Duration::from_secs(cooldown)).await;
-            cooldown *= 2;
-        }
-        info!("webhook set");
-    }
-}
-
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Env {
     Prod,
@@ -147,7 +79,7 @@ async fn main() {
 
     match command {
         Command::Load { reset_hook } => {
-            let mut state = TotalState::load();
+            let mut state = AppState::load();
 
             if reset_hook {
                 state.hook = state.hook.reset();
@@ -202,36 +134,10 @@ async fn main() {
             }
             let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
 
-            TotalState {
-                app_state: AppState::new(),
-                hook: Hook::init(bot_token, domain).port(port),
-            }
+            AppState::new(bot_token, domain, port)
         }
     }
     .save();
-}
-
-impl TotalState {
-    const FILE_PATH: &str = "state.postcard";
-    fn load() -> Self {
-        let bytes = std::fs::read(Self::FILE_PATH).unwrap();
-        postcard::from_bytes(&bytes).unwrap()
-    }
-    fn save(&self) {
-        let bytes = postcard::to_allocvec(self).unwrap();
-        std::fs::write(Self::FILE_PATH, &bytes).unwrap();
-        info!("state writen to disk");
-    }
-    async fn process_inputs(
-        mut self,
-        mut receiver: Receiver<Input>,
-        mut output: Sender<(Output, Context)>,
-    ) -> Self {
-        while let Some(input) = receiver.recv().await {
-            self.app_state.input(input, &mut output).await;
-        }
-        self
-    }
 }
 
 // async fn printer(payload: String) -> StatusCode {
@@ -577,6 +483,11 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
     }
 }
 
+/// Listens for termination signals and gracefully stops the web server
+///
+/// It will close all sending endpoint for input channel, which will
+/// cause all sending endpoint for output channel to be closed. All tasks
+/// will join and the service will gracefully exit.
 fn termination_signal(handle: Handle) {
     tokio::spawn(async move {
         let ctrl_c = async {

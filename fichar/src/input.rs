@@ -2,7 +2,6 @@ use telegram::{ChatMember, ChatType, Update};
 
 #[derive(Debug, Clone)]
 pub enum Input {
-    AutoSave,
     Text {
         user: (Option<String>, Option<String>),
         chat: i64,

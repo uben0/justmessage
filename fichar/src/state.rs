@@ -1,37 +1,130 @@
 use crate::{
     command::{self, Command},
     context::Context,
+    gen_key,
     input::Input,
+    key_to_hex,
     language::Language,
     output::Output,
     state::instance::{AddSpanError, Instance, LeaveError, Span},
 };
+use axum::http::StatusCode;
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{info, warn};
 
 pub mod instance;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hook {
+    pub port: u16,
+    pub domain: String,
+    pub bot_token: String,
+    pub secret_token: String,
+    pub cert_cert: String,
+    pub cert_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
+    pub hook: Hook,
     instances: HashMap<i64, Instance>,
+}
+impl Hook {
+    pub fn reset(self) -> Self {
+        let certificate = rcgen::generate_simple_self_signed([self.domain.clone()]).unwrap();
+        let cert_cert = certificate.cert.pem();
+        let cert_key = certificate.signing_key.serialize_pem();
+        let secret_token = key_to_hex(gen_key());
+
+        Self {
+            secret_token,
+            cert_cert,
+            cert_key,
+            ..self
+        }
+    }
+    pub fn init(bot_token: String, domain: String) -> Self {
+        Self {
+            port: 443,
+            domain,
+            bot_token,
+            secret_token: String::new(),
+            cert_cert: String::new(),
+            cert_key: String::new(),
+        }
+        .reset()
+    }
+    pub fn port(self, port: u16) -> Self {
+        Self { port, ..self }
+    }
+    pub async fn set(&self) {
+        let mut cooldown = 8;
+        while !telegram::set_webhook(
+            &self.bot_token,
+            format!("https://{}:{}", self.domain, self.port),
+        )
+        .drop_pending_updates()
+        .certificate(self.cert_cert.clone().into())
+        .secret_token(self.secret_token.clone())
+        .send()
+        .await
+        .map(|response| response.status())
+        .unwrap_or(StatusCode::BAD_REQUEST)
+        .is_success()
+        {
+            warn!("failed to set webhook, retrying in {cooldown} seconds...");
+            tokio::time::sleep(Duration::from_secs(cooldown)).await;
+            cooldown *= 2;
+        }
+        info!("webhook set");
+    }
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    const FILE_PATH: &str = "state.postcard";
+    pub fn load() -> Self {
+        let bytes = std::fs::read(Self::FILE_PATH).unwrap();
+        postcard::from_bytes(&bytes).unwrap()
+    }
+    pub fn save(&self) {
+        let bytes = postcard::to_allocvec(self).unwrap();
+        std::fs::write(Self::FILE_PATH, &bytes).unwrap();
+        info!("state writen to disk");
+    }
+    pub async fn process_inputs(
+        mut self,
+        mut receiver: Receiver<Input>,
+        mut output: Sender<(Output, Context)>,
+    ) -> Self {
+        loop {
+            tokio::select! {
+                // auto-save, must be first to avoid starvation when lots of inputs arrive
+                _ = tokio::time::sleep(Duration::from_secs(60 * 2)) => {
+                    self.save();
+                }
+                input = receiver.recv() => {
+                    let Some(input) = input else {
+                        return self;
+                    };
+                    self.input(input, &mut output).await;
+                }
+            }
+        }
+    }
+    pub fn new(bot_token: String, domain: String, port: u16) -> Self {
         Self {
+            hook: Hook::init(bot_token, domain).port(port),
             instances: HashMap::new(),
         }
     }
     pub async fn input(&mut self, input: Input, output: &mut Sender<(Output, Context)>) {
         match input {
-            Input::AutoSave => {
-                todo!()
-            }
             Input::Text {
                 user,
                 chat,
