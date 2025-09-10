@@ -5,11 +5,13 @@
   - [x] pdf export
   - [ ] enter date
   - [ ] leave date
+  - [ ] time without minutes
+- [ ] help messages
 - [ ] group title
-- [ ] check journald logs
 - [ ] react to message
 - [ ] tests
 
+- [x] check journald logs
 - [x] safe file write
 - [x] bot for dev
 - [x] auto save
@@ -29,16 +31,16 @@
 - [ ] use normalized str for time zone
 - [ ] admin console
 - [ ] clippy
-- [ ] rename bot
+- [x] rename bot
 - [x] languages
 - [x] enter then leave
 - [x] gracefull exit
 - [x] self-signed
-- [ ] service
+- [x] service
 - [ ] security
   - [ ] encryption
   - [ ] limits
-- [ ] telegram markdown
+- [x] telegram markdown
 
 # COMMAND LIST
 
@@ -52,8 +54,10 @@ enter 11h40 leave 15h00  // adds a span today
 tuesday 11h40 15h00      // adds a span last tuesday
 24 11h40 15h00           // adds a span the 24th of the month
 2025/09                  // prints summary of september 2025
+2025/09 pdf              // prints summary of september 2025 as pdf
 july                     // prints summary of july of this year
 month                    // prints summary of this month
+month pdf                // prints summary of this month as a pdf
 clear                    // removes all span from today
 clear monday             // removes all span from last monday
 ```

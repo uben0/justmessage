@@ -355,9 +355,10 @@ impl Instance {
             Command::Clear { day } => {
                 let removed = self.clear(person, day.start, day.end);
                 output.push(Output::Ok);
-                if !removed.is_empty() {
-                    output.push(Output::ClearedSpans(removed));
-                }
+                output.push(Output::ClearedSpans {
+                    spans: removed,
+                    day: day.start,
+                });
             }
             Command::Span { enter, leave } => match self.add_span(person, enter, leave) {
                 Ok(overriden) if overriden.is_empty() => {

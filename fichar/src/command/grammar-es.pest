@@ -13,7 +13,7 @@ ADMIN      = _{ ^"admin" | ^"administradora" | ^"administrador" | ^"jefe" | ^"je
 SET        = _{ ^"setear" | ^"setea" | ^"configurar" | ^"configura" | ^"poner" | ^"pon" }
 TIME_ZONE  =  { ^"zona" ~ ^"horaria" }
 LANGUAGE   = _{ ^"idioma" | ^"lenguaje" }
-CLEAR      = _{ ^"borrar" }
+CLEAR      = _{ ^"borrar" | ^"borra" | ^"borro" }
 
 MONTH_01   = @{ "1" | "01" | ^"enero"      | ^"ene"   | ^"en"                    }
 MONTH_02   = @{ "2" | "02" | ^"febrero"    | ^"febre" | ^"febr" | ^"feb" | ^"fe" }

@@ -13,7 +13,7 @@ use fichar::{
     context::Context,
     input::Input,
     language::Language,
-    output::{Output, OutputDaySpan, OutputMonth},
+    output::{Output, OutputDaySpan, OutputMonth, TimeFormatter},
     state::AppState,
 };
 use indoc::{formatdoc, indoc};
@@ -293,50 +293,46 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
             Output::SpanOverrodeSpans(spans) => {
                 use std::fmt::Write;
                 let mut text = String::new();
-                match (context.language, spans.len()) {
+                let line = match (context.language, spans.len()) {
                     (Language::En, 2..) => "The following time spans were overriden:",
                     (Language::En, ..) => "The following time span was overriden:",
                     (Language::Es, 2..) => "Se anularon los siguientes tramos de tiempo:",
                     (Language::Es, ..) => "Se anuló el siguiente tramo de tiempo:",
                 };
-                let (from, to) = match context.language {
-                    Language::En => ("from", "to"),
-                    Language::Es => ("de", "a"),
-                };
+                writeln!(text, "{line}").unwrap();
                 for span in spans {
-                    let enter = context.time_zone.instant(span.enter);
-                    let leave = context.time_zone.instant(span.leave);
-                    let date = enter.format_ymd("/");
-                    let enter = enter.format_hm("h");
-                    let leave = leave.format_hm("h");
-                    writeln!(text, "  - {date} {from} {enter} {to} {leave}").unwrap();
+                    write!(text, "{}", span.format(&context)).unwrap();
                 }
-                telegram::send_text(&token, text, context.chat)
+                telegram::send_markdown(&token, text, context.chat)
                     .logged()
                     .await;
             }
-            Output::ClearedSpans(spans) => {
+            Output::ClearedSpans { spans, day } if spans.is_empty() => {
+                let day = context.time_zone.instant(day).format_ymd("/");
+                let text = match context.language {
+                    Language::En => {
+                        format!("There are no registered time spans on the __{}__.", day)
+                    }
+                    Language::Es => format!("No hay tramo de tiempo registrado el __{}__.", day),
+                };
+                telegram::send_markdown(&token, text, context.chat)
+                    .logged()
+                    .await;
+            }
+            Output::ClearedSpans { spans, day: _ } => {
                 use std::fmt::Write;
                 let mut text = String::new();
-                match (context.language, spans.len()) {
+                let line = match (context.language, spans.len()) {
                     (Language::En, 2..) => "The following time spans were cleared:",
                     (Language::En, ..) => "The following time span was cleared:",
                     (Language::Es, 2..) => "Se anularon los siguientes tramos de tiempo:",
                     (Language::Es, ..) => "Se anuló el siguiente tramo de tiempo:",
                 };
-                let (from, to) = match context.language {
-                    Language::En => ("from", "to"),
-                    Language::Es => ("de", "a"),
-                };
+                writeln!(text, "{line}").unwrap();
                 for span in spans {
-                    let enter = context.time_zone.instant(span.enter);
-                    let leave = context.time_zone.instant(span.leave);
-                    let date = enter.format_ymd("/");
-                    let enter = enter.format_hm("h");
-                    let leave = leave.format_hm("h");
-                    writeln!(text, "  - {date} {from} {enter} {to} {leave}").unwrap();
+                    write!(text, "{}", span.format(&context)).unwrap();
                 }
-                telegram::send_text(&token, text, context.chat)
+                telegram::send_markdown(&token, text, context.chat)
                     .logged()
                     .await;
             }
@@ -378,13 +374,13 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     .await;
             }
             Output::EnterOverrodeEntered(enter) => {
-                let enter = context.time_zone.instant(enter);
-
                 let text = match context.language {
                     Language::En => "The previous entering time was overriden:",
                     Language::Es => "La hora de entrada previa se anuló:",
                 };
-                telegram::send_text(&token, format!("{text} {enter}"), context.chat)
+                let enter = TimeFormatter::new(enter, &context);
+                let text = format!("{text}\n{enter}");
+                telegram::send_markdown(&token, text, context.chat)
                     .logged()
                     .await;
             }
@@ -473,19 +469,18 @@ async fn sender(token: String, mut receiver: Receiver<(Output, Context)>) {
                     Language::Es => "Tramo de tiempo registrado:",
                 };
                 let text = format!("{}\n{}", text, span.format(&context));
-                telegram::send_text(&token, text, context.chat)
+                telegram::send_markdown(&token, text, context.chat)
                     .logged()
                     .await;
             }
             Output::Entered(enter) => {
-                let enter = context.time_zone.instant(enter);
-                let date = enter.format_ymd("/");
-                let time = enter.format_hm("h");
                 let text = match context.language {
-                    Language::En => format!("You enter on {date} at {time}"),
-                    Language::Es => format!("Entras el {date} a las {time}"),
+                    Language::En => "You enter:",
+                    Language::Es => "Entras:",
                 };
-                telegram::send_text(&token, text, context.chat)
+                let enter = TimeFormatter::new(enter, &context);
+                let text = format!("{text}\n{enter}");
+                telegram::send_markdown(&token, text, context.chat)
                     .logged()
                     .await;
             }

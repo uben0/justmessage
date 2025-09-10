@@ -18,7 +18,10 @@ pub enum Output {
     Entered(i64),
     SpanHasEarlierLeaveThanEnter(Span),
     SpanOverrodeSpans(Vec<Span>),
-    ClearedSpans(Vec<Span>),
+    ClearedSpans {
+        day: i64,
+        spans: Vec<Span>,
+    },
     EnterOverrodeEntered(i64),
     TryLeaveButNotEntered,
     CouldNotInferMinute,
@@ -89,21 +92,31 @@ pub struct SpanFormatter<'a> {
 }
 impl<'a> Display for SpanFormatter<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (from, to) = match self.context.language {
-            Language::En => ("from", "to"),
-            Language::Es => ("de", "a"),
-        };
         let enter = self.context.time_zone.instant(self.span.enter);
         let leave = self.context.time_zone.instant(self.span.leave);
+
+        let from = match (self.context.language, enter.hour()) {
+            (Language::En, ..) => "from",
+            (Language::Es, 0..=1) => "de la",
+            (Language::Es, 2..) => "de las",
+        };
+        let to = match (self.context.language, enter.hour()) {
+            (Language::En, ..) => "to",
+            (Language::Es, 0..=1) => "a la",
+            (Language::Es, 2..) => "a las",
+        };
+
         let date = enter.format_ymd("/");
         let enter = enter.format_hm("h");
         let leave = leave.format_hm("h");
+
         let minutes = self.span.minutes();
         let hours = minutes.div_euclid(60);
         let minutes = minutes.rem_euclid(60);
+
         writeln!(
             f,
-            "{date} {from} {enter} {to} {leave} ({hours}h{minutes:0>2})"
+            "▸ __{date}__ {from} {enter} {to} {leave} \\(_{hours}h{minutes:0>2}_\\)"
         )
     }
 }
@@ -113,5 +126,27 @@ impl Span {
             context,
             span: self,
         }
+    }
+}
+pub struct TimeFormatter<'a> {
+    pub context: &'a Context,
+    pub time: i64,
+}
+impl<'a> TimeFormatter<'a> {
+    pub fn new(time: i64, context: &'a Context) -> Self {
+        Self { time, context }
+    }
+}
+impl<'a> Display for TimeFormatter<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let time = self.context.time_zone.instant(self.time);
+        let at = match (self.context.language, time.hour()) {
+            (Language::En, ..) => "at",
+            (Language::Es, 0..=1) => "a la",
+            (Language::Es, 2..) => "a las",
+        };
+        let date = time.format_ymd("/");
+        let time = time.format_hm("h");
+        write!(f, "▸ __{date}__ {at} {time}")
     }
 }

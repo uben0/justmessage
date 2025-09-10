@@ -122,6 +122,18 @@ pub async fn send_text(token: &str, text: String, chat_id: i64) -> Result<Respon
         .await
 }
 
+pub async fn send_markdown(token: &str, text: String, chat_id: i64) -> Result<Response, Error> {
+    client(token, "sendMessage")
+        .multipart(
+            Form::new()
+                .part("chat_id", Part::text(format!("{}", chat_id)))
+                .part("text", Part::text(text))
+                .part("parse_mode", Part::text("MarkdownV2")),
+        )
+        .send()
+        .await
+}
+
 pub fn set_webhook(token: &str, url: String) -> SetWebhook<'_> {
     SetWebhook {
         token,
