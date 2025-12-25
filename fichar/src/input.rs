@@ -29,6 +29,7 @@ impl TryFrom<Update> for Input {
     fn try_from(update: Update) -> Result<Self, Self::Error> {
         if let Some(message) = update.message {
             if let Some(text) = message.text {
+                println!("{:?}", message.entities);
                 Ok(Self::Text {
                     user: (message.from.first_name, message.from.last_name),
                     chat: message.chat.id,

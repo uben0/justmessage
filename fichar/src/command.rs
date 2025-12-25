@@ -43,10 +43,12 @@ pub enum Command {
     MonthHint {
         time_hint: TimeHintMonth,
         format: DocFormat,
+        all: bool,
     },
     Month {
         month: Range<i64>,
         format: DocFormat,
+        all: bool,
     },
     SetTimeZone {
         time_zone: Tz,

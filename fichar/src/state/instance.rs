@@ -140,6 +140,9 @@ impl Instance {
         }
         spans
     }
+    pub fn persons(&self) -> impl Iterator<Item = i64> {
+        self.persons.keys().copied()
+    }
 }
 
 pub enum AddSpanError {

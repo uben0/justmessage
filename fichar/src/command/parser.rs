@@ -7,6 +7,7 @@ use time_util::TimeHintDay;
 use time_util::TimeHintMinute;
 use time_util::TimeHintMonth;
 use tracing::error;
+use tracing::warn;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::command::DocFormat;
@@ -106,7 +107,7 @@ common_node!(
         WEEKDAY_5,
         WEEKDAY_6,
         PDF,
-        pdf,
+        month_options,
         word,
         hour_minute,
         number,
@@ -236,21 +237,26 @@ where
                     }
                 }
                 Node::command_month => {
-                    let format = command.child();
+                    let options = command.child();
+                    let (format, all) = parse_month_options(options);
                     Command::MonthHint {
                         time_hint: TimeHintMonth::None,
-                        format: parse_format(format),
+                        format,
+                        all,
                     }
                 }
                 Node::command_month_month => {
-                    let [month, format] = command.children();
+                    let [month, options] = command.children();
+                    let (format, all) = parse_month_options(options);
                     Command::MonthHint {
                         time_hint: TimeHintMonth::Month(parse_month(month)),
-                        format: parse_format(format),
+                        format,
+                        all,
                     }
                 }
                 Node::command_month_year_month => {
-                    let [month, format] = command.children();
+                    let [month, options] = command.children();
+                    let (format, all) = parse_month_options(options);
                     let order = month.as_rule().into();
                     let [lhs, rhs] = month.children();
                     let (year, month) = match order {
@@ -260,7 +266,8 @@ where
                     };
                     Command::MonthHint {
                         time_hint: TimeHintMonth::YearMonth(parse_year(year), parse_month(month)),
-                        format: parse_format(format),
+                        format,
+                        all,
                     }
                 }
                 Node::command_set_time_zone => {
@@ -285,16 +292,27 @@ where
     }
 }
 
-fn parse_format<R>(node: Pair<R>) -> DocFormat
+fn parse_month_options<R>(node: Pair<R>) -> (DocFormat, bool)
 where
     R: RuleType + Into<Node>,
 {
-    debug_assert_eq!(node.as_rule().into(), Node::pdf);
-    if node.into_inner().next().is_some() {
-        DocFormat::Pdf
-    } else {
-        DocFormat::Png
+    debug_assert_eq!(node.as_rule().into(), Node::month_options);
+    let mut all = false;
+    let mut doc = DocFormat::Png;
+    for node in node.into_inner() {
+        match node.as_rule().into() {
+            Node::PDF => {
+                doc = DocFormat::Pdf;
+            }
+            Node::TARGET_ALL => {
+                all = true;
+            }
+            _ => {
+                warn!("unreachable code");
+            }
+        }
     }
+    (doc, all)
 }
 
 fn parse_month<R>(node: Pair<R>) -> u32

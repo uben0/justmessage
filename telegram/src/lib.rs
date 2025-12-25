@@ -22,9 +22,24 @@ pub struct Message {
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
+    pub entities: Vec<Entity>,
+    #[serde(default)]
     pub group_chat_created: bool,
     #[serde(default)]
     pub left_chat_member: Option<User>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(tag = "type")]
+pub enum Entity {
+    #[default]
+    Unknown,
+    #[serde(rename = "user")]
+    User {
+        offset: usize,
+        length: usize,
+        user: User,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

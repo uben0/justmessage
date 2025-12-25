@@ -1,5 +1,6 @@
 # TODO
 
+- [ ] doc
 - [ ] commands
   - [x] enter - leave
   - [x] pdf export

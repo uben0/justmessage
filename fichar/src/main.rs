@@ -46,6 +46,14 @@ enum Command {
         domain: String,
         port: u16,
     },
+    SetToken,
+    SetPort {
+        port: u16,
+    },
+    SetDomain {
+        domain: String,
+    },
+    Info,
 }
 impl Default for Command {
     fn default() -> Self {
@@ -60,7 +68,7 @@ enum Env {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
     let Args { env, command } = Args::parse();
 
     match env {
@@ -77,6 +85,26 @@ async fn main() {
     }
 
     match command {
+        Command::Info => {
+            let state = AppState::load();
+            println!("domain: {}", state.hook.domain);
+            println!("  port: {}", state.hook.port);
+        }
+        Command::SetToken => {
+            let mut state = AppState::load();
+            state.hook.bot_token = get_token_from_env_var()?;
+            state.save();
+        }
+        Command::SetPort { port } => {
+            let mut state = AppState::load();
+            state.hook.port = port;
+            state.save();
+        }
+        Command::SetDomain { domain } => {
+            let mut state = AppState::load();
+            state.hook.domain = domain;
+            state.save();
+        }
         Command::Load { reset_hook } => {
             let mut state = AppState::load();
 
@@ -122,7 +150,7 @@ async fn main() {
             sender.await.unwrap();
 
             info!("graceful shutdown");
-            state
+            state.save();
         }
         Command::Init { domain, port } => {
             match env {
@@ -131,12 +159,23 @@ async fn main() {
                     dotenvy::dotenv().ok();
                 }
             }
-            let bot_token = std::env::var("JUSTMESSAGE_TELEGRAM_BOT_TOKEN").unwrap();
+            let bot_token = get_token_from_env_var()?;
 
-            AppState::new(bot_token, domain, port)
+            AppState::new(bot_token, domain, port).save();
         }
     }
-    .save();
+    Ok(())
+}
+
+const TOKEN_ENV_VAR: &str = "JUSTMESSAGE_TELEGRAM_BOT_TOKEN";
+
+#[derive(Debug)]
+enum Error {
+    TokenEnvVarNotFound,
+}
+
+fn get_token_from_env_var() -> Result<String, Error> {
+    std::env::var(TOKEN_ENV_VAR).map_err(|_| Error::TokenEnvVarNotFound)
 }
 
 // async fn printer(payload: String) -> StatusCode {

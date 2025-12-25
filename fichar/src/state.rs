@@ -97,7 +97,7 @@ impl AppState {
     pub fn save(&self) {
         let bytes = postcard::to_allocvec(self).unwrap();
         std::fs::write(Self::FILE_PATH_TMP, &bytes).unwrap();
-        std::fs::rename(Self::FILE_PATH, Self::FILE_PATH_BAK).unwrap();
+        std::fs::rename(Self::FILE_PATH, Self::FILE_PATH_BAK).ok();
         std::fs::rename(Self::FILE_PATH_TMP, Self::FILE_PATH).unwrap();
         info!("state writen to disk");
     }
@@ -109,7 +109,7 @@ impl AppState {
         loop {
             tokio::select! {
                 // auto-save, must be first to avoid starvation when lots of inputs arrive
-                _ = tokio::time::sleep(Duration::from_secs(60 * 2)) => {
+                _ = tokio::time::sleep(Duration::from_secs(60 * 60)) => {
                     self.save();
                 }
                 input = receiver.recv() => {
@@ -336,9 +336,12 @@ impl Instance {
                     return;
                 }
             },
-            Command::MonthHint { time_hint, format } => match time_hint.infer(self.time_zone, date)
-            {
-                Some(month) => Command::Month { month, format },
+            Command::MonthHint {
+                time_hint,
+                format,
+                all,
+            } => match time_hint.infer(self.time_zone, date) {
+                Some(month) => Command::Month { month, format, all },
                 None => {
                     output.push(Output::CouldNotInferMonth);
                     return;
@@ -405,18 +408,26 @@ impl Instance {
                     output.push(Output::SpanHasEarlierLeaveThanEnter(span));
                 }
             },
-            Command::Month { month, format } => {
-                let name = self
-                    .get_name(person)
-                    .unwrap_or_else(|| "Unknown".to_string());
+            Command::Month { month, format, all } => {
                 output.push(Output::Ok);
-                output.push(Output::Month {
-                    person,
-                    name,
-                    format,
-                    month: month.start,
-                    spans: self.select(person, month.start, month.end),
-                });
+                let persons = if all {
+                    self.persons().collect()
+                } else {
+                    Vec::from([person])
+                };
+
+                for person in persons {
+                    let name = self
+                        .get_name(person)
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    output.push(Output::Month {
+                        person,
+                        name,
+                        format,
+                        month: month.start,
+                        spans: self.select(person, month.start, month.end),
+                    });
+                }
             }
             Command::SetTimeZone { time_zone } => {
                 self.time_zone = time_zone;

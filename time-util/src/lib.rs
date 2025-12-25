@@ -277,6 +277,7 @@ impl TimeHintMonth {
     }
 }
 impl TimeHintDay {
+    // TODO: rename to infer_before
     pub fn infer_past(self, time_zone: impl TimeZone, instant: i64) -> Option<Range<i64>> {
         Some(match self {
             TimeHintDay::None => time_zone.instant(instant).align_day()?.range_day()?,

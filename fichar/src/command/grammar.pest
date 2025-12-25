@@ -1,5 +1,4 @@
 WHITESPACE     = _{ " " | "\n" | "\t" }
-pdf            =  { PDF? }
 PDF            =  { "pdf" }
 hour_minute    = ${ number ~ ":" ~ number | number ~ ^"h" ~ number ~ ^"m"? }
 number         = @{ ASCII_DIGIT+ }
@@ -18,6 +17,7 @@ target         = ${ "@" ~ (target_index | TARGET_ALL | TARGET_ME) }
 target_index   = ${ number }
 word           = @{ (LETTER | "-")+ }
 date_hint      =  { year_month_day | month_day | weekday | day }
+month_options  =  { (PDF | TARGET_ALL)* }
 month          = _{
     MONTH_01 |
     MONTH_02 |
@@ -80,6 +80,6 @@ command_enter             = { ENTER }
 command_enter_hour_minute = { ENTER ~ hour_minute }
 command_leave             = { LEAVE }
 command_leave_hour_minute = { LEAVE ~ hour_minute }
-command_month             = { MONTH ~ pdf? }
-command_month_month       = { MONTH? ~ month ~ pdf? }
-command_month_year_month  = { MONTH? ~ (year_month | month_year) ~ pdf? }
+command_month             = { MONTH ~ month_options }
+command_month_month       = { MONTH? ~ month ~ month_options }
+command_month_year_month  = { MONTH? ~ (year_month | month_year) ~ month_options }
